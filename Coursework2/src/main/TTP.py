@@ -29,6 +29,15 @@ def load_ttp_file(filepath):
                 if "CAPACITY OF KNAPSACK" in line:
                     lineparts = line.split(":")
                     capacity = float(lineparts[1].strip())
+                elif "MIN SPEED" in line: 
+                    lineparts = line.split(":")
+                    min_speed = float(lineparts[1].strip())
+                elif "MAX SPEED" in line: 
+                    lineparts = line.split(":")
+                    max_speed = float(lineparts[1].strip())
+                elif "RENTING RATIO" in line: 
+                    lineparts = line.split(":")
+                    renting_ratio = float(lineparts[1].strip())
 
             #Extract Notes
             elif section == "Nodes": 
@@ -41,17 +50,21 @@ def load_ttp_file(filepath):
                 lineparts = line.split()
                 items.append({'id': int(lineparts[0]), 'value': float(lineparts[1]), 
                           'weight': float(lineparts[2]), 'city_id': int(lineparts[3])-1})
-    return cities, items, capacity
+    return cities, items, capacity, min_speed, max_speed, renting_ratio
 
 
 #This algorithm was created using the design from the paper "A two-stage algorithm based on greedy ant colony optimization for travelling thief problem" 
 class TTP: 
-    def __init__(self, cities, items, capacity):
+    def __init__(self, cities, items, capacity, min_speed, max_speed, renting_ratio):
         self.cities = np.array(cities)
         self.items = items 
         self.capacity = capacity
+        self.min_speed = min_speed
+        self.max_speed = max_speed 
+        self.renting_ratio = renting_ratio
         self.num_cities = len(cities)
         self.dist_matrix = self._compute_distances()
+
 
     def _compute_distances(self): 
         dist_matrix = np.zeros((self.num_cities, self.num_cities))
@@ -360,10 +373,10 @@ def _calculate_value_density(item):
 if os.path.exists(FILENAME):
     # Load
     print("Loading Data...")
-    c, i, cap = load_ttp_file(FILENAME)
+    c, i, cap, min, max, rr = load_ttp_file(FILENAME)
         
     # Init
-    ttp = TTP(c, i, cap)
+    ttp = TTP(c, i, cap, min, max, rr)
     gaco = GACO(ttp, num_ants=30) # Paper suggests 30-50 ants [cite: 333]
         
     # Run
