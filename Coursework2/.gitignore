@@ -1,0 +1,19 @@
+# Created by venv; see https://docs.python.org/3/library/venv.html
+# 1. Virtual Environment Folders
+venv/
+env/
+.venv/
+
+# 2. Operating System Files (like the .DS_Store file you saw earlier)
+.DS_Store
+
+# 3. Compiled Python files
+*.pyc
+
+# 4. Logs and Database
+*.log
+*.sqlite
+
+# 5. Build artifacts
+dist/
+build/
