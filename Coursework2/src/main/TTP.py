@@ -655,7 +655,7 @@ class GACO_Large:
         final_route, final_dist = self.two_opt(best_global_route)
         return final_route, final_dist
     
-FILENAME = 'Coursework2/src/recources/a280-n279.txt' 
+FILENAME = '../resources/a280-n279.txt'
 
 def _calculate_value_density(item):
     """Calculates r_i = p_i / w_i[cite: 1132]."""
@@ -669,8 +669,8 @@ if os.path.exists(FILENAME):
     c, i, cap, min, max, rr = load_ttp_file(FILENAME)
         
     # Init
-    ttp = TTP(c, i, cap, min, max, rr)
-    gaco = GACO(ttp, num_ants=30) # Paper suggests 30-50 ants [cite: 333]
+    ttp = TTP_Large(c, i, cap, min, max, rr)
+    gaco = GACO_Large(ttp, num_ants=30) # Paper suggests 30-50 ants [cite: 333]
         
     # Run
     best_route, best_dist = gaco.run(max_iterations=50) # Lowered iterations for testing
