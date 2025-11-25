@@ -737,7 +737,6 @@ class Solution:
         """
         Fitness evaluation function
         """
-        Solution.fit_counter += 1
         fitness = (self.get_value() - self.get_penalty())
         self.fitness = fitness
 
@@ -782,6 +781,14 @@ class Solution:
             raise Exception("Empty chromosome")
         else:
             return index
+
+
+def calc_velocity(weight, w_max, v_max, v_min):
+    if weight <= max:
+        velocity = v_max - weight/w_max * (v_max - v_min)
+    else:
+        velocity = v_min
+    return velocity
 
 
 def crossover_weighted(parent1, parent2):
@@ -918,7 +925,7 @@ def averaging_test(capacity, bags, seed_list):
         random.seed(seed)
 
         results, history = genetic_algorithm(
-            capacity, bags, 200, 1.0, 0.05, 0.2, 0.1, fitness_eval_num=10_000)
+            capacity, bags, 200, 1.0, 0.05, 0.2, 0.1, generations=100)
 
         best, mean = get_mean_and_best_result(results)
         if best:
@@ -1056,8 +1063,6 @@ def genetic_algorithm(capacity, bags, population_size=200, population_repair=1.0
 
 
 
-
-
 FILENAME = '../resources/a280-n279.txt'
 
 def _calculate_value_density(item):
@@ -1069,10 +1074,12 @@ def _calculate_value_density(item):
 if os.path.exists(FILENAME):
     # Load
     print("Loading Data...")
-    c, i, cap, min, max, rr = load_ttp_file(FILENAME)
+    cities, items, capacity, min, max, rr = load_ttp_file(FILENAME)
+
+    print(rr)
         
     # Init
-    ttp = TTP_Large(c, i, cap, min, max, rr)
+    ttp = TTP_Large(cities, items, capacity, min, max, rr)
     gaco = GACO_Large(ttp, num_ants=30) # Paper suggests 30-50 ants [cite: 333]
         
     # Run
@@ -1087,26 +1094,26 @@ if os.path.exists(FILENAME):
 else:
     print(f"Error: File {FILENAME} not found.")
                     
-
-if __name__ == "__main__":
-    capacity, bags = read_file()
-
-    seed_list = [i + 30 for i in range(238)]
-    # run_testing(capacity, bags, seed_list)
-    config_comp(capacity, bags, seed_list)
-
-    start = time.time()
-    results, history = genetic_algorithm(
-        capacity, bags, 200, 1.0, 0.05, 0.2, 0.1, generations=100)
-    delta = time.time() - start
-    best, mean = get_mean_and_best_result(results)
-    if best:
-        print(best)
-        print("Best: ", best.get_value(), "\nMean: ", mean, "\nTime: ", delta)
-
-    sns.lineplot(data=history["best"], label='Config 1', color='skyblue')
-
-    plt.xlabel("Generation")
-    plt.ylabel("Best Fitness")
-    plt.legend()
-    plt.show()
+#
+# if __name__ == "__main__":
+#     capacity, bags = read_file()
+#
+#     seed_list = [i + 30 for i in range(238)]
+#     # run_testing(capacity, bags, seed_list)
+#     config_comp(capacity, bags, seed_list)
+#
+#     start = time.time()
+#     results, history = genetic_algorithm(
+#         capacity, bags, 200, 1.0, 0.05, 0.2, 0.1, generations=100)
+#     delta = time.time() - start
+#     best, mean = get_mean_and_best_result(results)
+#     if best:
+#         print(best)
+#         print("Best: ", best.get_value(), "\nMean: ", mean, "\nTime: ", delta)
+#
+#     sns.lineplot(data=history["best"], label='Config 1', color='skyblue')
+#
+#     plt.xlabel("Generation")
+#     plt.ylabel("Best Fitness")
+#     plt.legend()
+#     plt.show()
