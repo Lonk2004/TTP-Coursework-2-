@@ -36,26 +36,27 @@ def open_file(fname):
     
     return capacity, items
 
-def initialise(cities, capacity, items, population_size=100):
+def initialise(cities, items, capacity, population_size=10):
     """Initialises a population for the evolutionary algorithm"""
     items = [item for item in items if item[2] in cities]
-    
+
     chromosomes = []
     chromosome = "0" * len(items)
     for _ in range(population_size):
         new_chromosome = chromosome
-        weight = 0
-        item = random.randint(0, len(items) - 1)
-        if new_chromosome[item] == "0":
-            if weight + items[item][1] <= capacity:
-                new_chromosome = new_chromosome[:item] + "1" + new_chromosome[item + 1:]
-                weight += items[item][1]
-            
-        chromosomes.append(chromosome)
-    
-    return chromosomes
+        rand_assign = random.randint(0, len(items) - 1)
+        while rand_assign > 0:
+            item = random.randint(0, len(items) - 1)
+            if new_chromosome[item] == "0":
+                if fitness(new_chromosome[:item] + "1" + new_chromosome[item + 1:], items, capacity) > 0:
+                    new_chromosome = new_chromosome[:item] + "1" + new_chromosome[item + 1:]
+                    rand_assign -= 1
+        
+        chromosomes.append(new_chromosome)
+        
+    return chromosomes, items
 
-def fitness(chromosome, items):
+def fitness(chromosome, items, capacity):
     total_value = 0
     total_weight = 0
     for i in range(len(chromosome)):
@@ -64,17 +65,26 @@ def fitness(chromosome, items):
             total_weight += items[i][1]
     return total_value if total_weight <= capacity else 0
 
-def selection(t_size, chromosomes):
-    parents = []
-    for i in range(2):
+def selection(t_size, chromosomes, items, capacity):
+    def tournament(t_size, chromosomes, items, capacity):
         indices = []
         for _ in range(t_size):
             indices.append(random.randint(0, len(chromosomes) - 1))
-        parents.append(max(indices, key=lambda index: fitness(chromosomes[i])))
+        parent = max(indices, key=lambda chromosome: fitness(chromosomes[chromosome], items, capacity))
+        return parent
+    
+    parents = []
+    chromosomes_selection = chromosomes
+    for _ in range(2):
+        parent = tournament(t_size, chromosomes_selection, items, capacity)
+        parents.append(chromosomes_selection[parent])
+        chromosomes_selection = chromosomes_selection[:parent] + chromosomes_selection[parent + 1:]
+        
+    return parents
 
 def crossover(parents, items):
     binary_mask = ""
-    for i in range(items):
+    for i in range(len(items)):
         binary_mask += str(random.randint(0, 1))
         
     parent1 = parents[0]
@@ -82,7 +92,7 @@ def crossover(parents, items):
     child1 = ""
     child2 = ""
     for i in range(len(binary_mask)):
-        if binary_mask[i] == "1":
+        if binary_mask[i] == "0":
             child1 += parent1[i]
             child2 += parent2[i]
         else:
@@ -99,22 +109,36 @@ def mutation(chromosome, mutation_rate=0.01):
             new_chromosome += chromosome[i]
     return new_chromosome
 
-def replacement(chromosomes, children, items):
+def replacement(chromosomes, children, items, capacity):
     for child in children:
-        weakest_index = min(range(len(chromosomes)), key=lambda i: fitness(chromosomes[i], items))
-        if fitness(child, items) > fitness(chromosomes[weakest_index], items):
+        weakest_index = min(range(len(chromosomes)), key=lambda i: fitness(chromosomes[i], items, capacity))
+        if fitness(child, items, capacity) > fitness(chromosomes[weakest_index], items, capacity):
             chromosomes[weakest_index] = child
+    return chromosomes
 
 def velocity(weight, capacity, vmin=0.1, vmax=1):
     if weight <= capacity:
-        return vmax - (weight / capacity) * (vmax - vmin) + vmin
+        return vmax - (weight / capacity) * (vmax - vmin)
     else:
         return vmin
 
 capacity, items = open_file(fname)
 
-cities = [random.randint(2, 280) for _ in range(50)]
+cities = [random.randint(2, 280) for _ in range(150)]
 cities = list(dict.fromkeys(cities))
+chromosomes, items = initialise(cities, items, capacity)
 
-chromosomes = initialise(cities, capacity, items)
-print(chromosomes)
+for i in range(10000):
+    parents = selection(3, chromosomes, items, capacity)
+
+    child1, child2 = crossover(parents, items)
+
+    mutated_child1 = mutation(child1, mutation_rate=0.05)
+    mutated_child2 = mutation(child2, mutation_rate=0.05)
+    chromosomes = replacement(chromosomes, [mutated_child1, mutated_child2], items, capacity)
+
+best_chromosome = max(chromosomes, key=lambda chromosome: fitness(chromosome, items, capacity))
+best_value = fitness(best_chromosome, items, capacity)
+
+print(f"Best chromosome: {best_chromosome}")
+print(f"Best value: {best_value}")
