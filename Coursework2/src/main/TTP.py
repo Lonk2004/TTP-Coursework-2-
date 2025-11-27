@@ -1,13 +1,19 @@
 import numpy as np
 import os
 from scipy.spatial import KDTree
+import seaborn as sns
+import matplotlib.pyplot as plt
+import math
+import random
+from tqdm import tqdm
+import time
 
 def load_ttp_file(filepath):
     cities = []
     items = []
     capacity = 0
 
-    #go though each section 
+    #go through each section
     section = "Header"
 
     with open(filepath, 'r') as f: 
@@ -17,7 +23,7 @@ def load_ttp_file(filepath):
                 continue 
             
 
-            #detect if the section is chaned
+            #detect if the section is changed
             if line.startswith("NODE_COORD_SECTION"): 
                 section = "Nodes"
                 continue
@@ -53,7 +59,7 @@ def load_ttp_file(filepath):
                           'weight': float(lineparts[2]), 'city_id': int(lineparts[3])-1})
     return cities, items, capacity, min_speed, max_speed, renting_ratio
 
-
+"""
 #This algorithm was created using the design from the paper "A two-stage algorithm based on greedy ant colony optimization for travelling thief problem" 
 #class TTP: 
     def __init__(self, cities, items, capacity, min_speed, max_speed, renting_ratio):
@@ -360,7 +366,8 @@ def load_ttp_file(filepath):
         final_route, final_dist = self.two_opt(best_global_route, self.ttp.dist_matrix)
         items = self.get_available_items_in_route_order(final_route)
         return final_route, final_dist, items
-    
+"""
+
 #Algorithms have been modified by myself with the help of Gemini AI to optimsie for TTPs so large, we cannot store everything as np matricies.
 class TTP_Large: 
     def __init__(self, cities, items, capacity, min_speed, max_speed, renting_ratio):
@@ -386,8 +393,8 @@ class GACO_Large:
         self.alpha = alpha #pheromone importance
         self.beta = beta #distance importance
         self.rho = 0.9 #evapouration rate
-        self.Q = Q #selection coefficent
-        self.k = k_neighbors #only see k neighbords
+        self.Q = Q #selection coefficient
+        self.k = k_neighbors #only see k neighbours
 
         print("Building KD-Tree for neighbors")
         self.tree = KDTree(self.ttp.cities)
@@ -397,7 +404,7 @@ class GACO_Large:
         self.neighbor_indices = idxs[:, 1:]
         self.neighbor_dists = dists[:, 1:]
 
-        #use sparse matrix representation for memory efficency
+        #use sparse matrix representation for memory efficiency
         self.pheromone_matrix = np.ones((self.ttp.num_cities, self.k))
 
         self.heuristic_matrix = 1.0 / (self.neighbor_dists + 1e-10)
@@ -432,7 +439,7 @@ class GACO_Large:
             while y + h_y < Y_max: 
                 current_area = {'x_min': x, 'x_max': x+g,
                                 'y_min': y, 'y_max': y+g }
-                #count high value items in this box 
+                #count high-value items in this box
                 count = 0
                 for item in type1_items:
                     city_coords = self.ttp.cities[item['city_id']]
@@ -572,10 +579,10 @@ class GACO_Large:
         #evapouration effects
         self.pheromone_matrix *= (1-self.rho)
         #deposit
-        #optimisation - only update pheamones for edges that exist
+        #optimisation - only update pheromones for edges that exist
         for route, dist in zip(all_ant_routes, all_ant_distances): 
             deposit = 1.0/ dist if dist > 0 else 0
-            #optimisation - only update pheamones for edges that exist
+            #optimisation - only update pheromones for edges that exist
             for i in range(len(route) -1): 
                 x = route[i]
                 y = route[i+1]
@@ -654,8 +661,409 @@ class GACO_Large:
         print("Running 2-OPT optimization...")
         final_route, final_dist = self.two_opt(best_global_route)
         return final_route, final_dist
-    
-FILENAME = 'Coursework2/src/recources/a280-n279.txt' 
+
+
+################## GA ####################
+
+
+class Solution:
+    """
+    Class implementation of a solution
+    It contains the necessary methods for manipulating individual solutions
+    """
+    bags = []
+    capacity = 0
+    mutation_rate = 0.01
+
+    def __init__(self):
+        self.chromosome = np.random.randint(0, 2, size=len(Solution.bags))
+        self.fitness = None
+
+    def __str__(self):
+        return (
+            f"Solution(weight={self.get_weight():.2f}, "
+            f"value={self.get_value():.2f}, "
+            f"fitness={self.fitness:.2f})"
+        )
+
+    def get_penalty(self):
+        weight = self.get_weight()
+        capacity = Solution.capacity
+
+        if weight > capacity:
+            return (weight - capacity) ** 3
+
+        return 0
+
+    def get_value(self):
+        values = np.array([i for _, i in Solution.bags])
+        return np.dot(self.chromosome, values)
+
+    def get_weight(self):
+        weights = np.array([i for i, _ in Solution.bags])
+        return np.dot(self.chromosome, weights)
+
+    def get_best_ratio_item(self):
+        space_remaining = Solution.capacity - self.get_weight()
+        best_ratio = None
+        index = None
+
+        for i, value in enumerate(self.chromosome):
+            if value == 0:
+                item_weight = Solution.bags[i][0]
+                item_value = Solution.bags[i][1]
+                item_ratio = item_value/item_weight
+                if item_weight <= space_remaining and (best_ratio is None or item_ratio > best_ratio):
+                    index = i
+                    best_ratio = item_ratio
+
+        return index
+
+    def get_biggest_fitting(self):
+        space_remaining = Solution.capacity - self.get_weight()
+        biggest_weight = None
+        index = None
+
+        for i, value in enumerate(self.chromosome):
+            if value == 0:
+                item_weight = Solution.bags[i][0]
+                if item_weight <= space_remaining and (biggest_weight is None or item_weight > biggest_weight):
+                    index = i
+                    biggest_weight = item_weight
+
+        return index
+
+    def calc_fitness(self):
+        """
+        Fitness evaluation function
+        """
+        fitness = (self.get_value() - self.get_penalty())
+        self.fitness = fitness
+
+    def mutate(self):
+        """
+        Mutation operator
+        """
+        for i in range(len(self.chromosome)):
+            if random.random() < Solution.mutation_rate:
+                self.chromosome[i] = 1 - self.chromosome[i]
+
+    def repair_by_ratio(self):
+        """
+        Repair operator (DROP + ADD)
+        """
+
+        while self.get_weight() > Solution.capacity:
+            self.chromosome[self.find_worst_ratio_item()] = 0
+
+        chosen_item = self.get_biggest_fitting()
+
+        while not chosen_item is None:
+            self.chromosome[chosen_item] = 1
+            chosen_item = self.get_best_ratio_item()
+
+    def find_worst_ratio_item(self):
+        index = None
+        worst_ratio = None
+
+        for i, value in enumerate(self.chromosome):
+            if value == 1:
+                item_weight = Solution.bags[i][0]
+                item_value = Solution.bags[i][1]
+
+                ratio = item_value/item_weight
+
+                if (worst_ratio is None) or (ratio < worst_ratio):
+                    worst_ratio = ratio
+                    index = i
+
+        if index is None:
+            raise Exception("Empty chromosome")
+        else:
+            return index
+
+
+def calc_velocity(weight, w_max, v_max, v_min):
+    if weight <= max:
+        velocity = v_max - weight/w_max * (v_max - v_min)
+    else:
+        velocity = v_min
+    return velocity
+
+
+def crossover_weighted(parent1, parent2):
+    """
+    Crossover operator (weighted crossover)
+    """
+    fit1 = parent1.fitness
+    fit2 = parent2.fitness
+    ratio = fit1 / (fit1 + fit2)
+
+    child1 = Solution()
+    child2 = Solution()
+
+    for i in range(len(parent1.chromosome)):
+        if random.random() < ratio:
+            child1.chromosome[i] = parent1.chromosome[i]
+        else:
+            child1.chromosome[i] = parent2.chromosome[i]
+
+        if random.random() < ratio:
+            child2.chromosome[i] = parent1.chromosome[i]
+        else:
+            child2.chromosome[i] = parent2.chromosome[i]
+
+    return child1, child2
+
+
+def generate_population(size):
+    return [Solution() for _ in range(size)]
+
+
+def repair_population(population):
+    for sol in population:
+        sol.repair_by_ratio()
+
+
+def tournament_selection(population, tournament_size):
+    """
+    tournament selection
+    """
+    tournament = random.sample(population, tournament_size)
+    return max(tournament, key=lambda s: s.fitness)
+
+
+def calculate_population_fitness(population):
+    for sol in population:
+        sol.calc_fitness()
+
+
+def get_mean_and_best_result(results):
+    repair_population(results)
+    calculate_population_fitness(results)
+
+    value_total = 0
+    best_value = 0
+    best_solution = None
+    for result in results:
+        value = result.get_value()
+        value_total += value
+        if value > best_value:
+            best_value = value
+            best_solution = result
+
+    mean_value = value_total / len(results)
+
+    return (best_solution, mean_value)
+
+
+def paired_test(capacity, bags, seed_list, parameter_tested_values, parameter):
+    """
+    Main paired test function
+    """
+    stats = []
+
+    for i, seed in enumerate(seed_list):
+        print(i+1, " / ", len(seed_list))
+        random.seed(seed)
+        stats.append([])
+
+        for par in parameter_tested_values:
+            match parameter:
+                case "population_size":
+                    results = genetic_algorithm(
+                        capacity, bags, population_size=par, population_repair=0.8, mutation_rate=0.05, tournament_size=0.8, elite_n=0.2)
+
+                case "population_repair":
+                    results = genetic_algorithm(
+                        capacity, bags, population_size=50, population_repair=par, mutation_rate=0.05, tournament_size=0.8, elite_n=0.2)
+
+                case "mutation_rate":
+                    results = genetic_algorithm(
+                        capacity, bags, population_size=50, population_repair=0.8, mutation_rate=par, tournament_size=0.8, elite_n=0.2)
+
+                case "tournament_size":
+                    results = genetic_algorithm(
+                        capacity, bags, population_size=50, population_repair=0.8, mutation_rate=0.05, tournament_size=par, elite_n=0.2)
+
+                case "elite_n":
+                    results = genetic_algorithm(
+                        capacity, bags, population_size=50, population_repair=0.8, mutation_rate=0.05, tournament_size=0.8, elite_n=par)
+
+            best, _ = get_mean_and_best_result(results)
+            if best:
+                best = best.get_value()
+                stats[i].append(best)
+
+    per_config_results = [[] for _ in parameter_tested_values]
+
+    for seed in stats:
+        for i, val in enumerate(seed):
+            per_config_results[i].append(val)
+
+    per_config_means = [float(np.mean(vals)) for vals in per_config_results]
+    per_config_deviations = [float(np.std(vals))
+                             for vals in per_config_results]
+
+    print("Values: ", parameter_tested_values)
+    print("Means: ", per_config_means)
+    print("Standard Deviations: ", per_config_deviations)
+
+
+"""
+Functions for comparing configurations
+"""
+
+
+def averaging_test(capacity, bags, seed_list):
+    optimals = []
+    means = []
+    stats = []
+
+    for i, seed in enumerate(seed_list):
+        print(i+1, " / ", len(seed_list))
+        random.seed(seed)
+
+        results, history = genetic_algorithm(
+            capacity, bags, 200, 1.0, 0.05, 0.2, 0.1, generations=100)
+
+        best, mean = get_mean_and_best_result(results)
+        if best:
+            best = best.get_value()
+            optimals.append(best)
+            means.append(mean)
+
+        stats.append(history["best"])
+
+    mean = float(np.mean(optimals))
+    std_deviation = float(np.std(optimals))
+
+    print("Mean: ", mean)
+    print("Standard Deviation: ", std_deviation)
+
+    sns.lineplot(stats, color='skyblue')
+    plt.show()
+
+    sns.histplot(means, kde=True, color='skyblue')
+    plt.xlabel("Final population mean value")
+    plt.ylabel("Density")
+    plt.show()
+
+    sns.histplot(optimals, kde=True, color='skyblue')
+    plt.xlabel("Fitness Value")
+    plt.ylabel("Density")
+    plt.show()
+
+
+def config_comp(capacity, bags, seed_list):
+    vars = [[200, 1.0, 0.05, 0.2, 0.1, 10_000], [200, 1.0, 0.08, 0.2, 0.1, 10_000], [
+        100, 1.0, 0.05, 0.2, 0.1, 10_000], [1000, 1.0, 0.05, 0.2, 0.1, 10_000]]
+
+    stats = [[] for _ in vars]
+    times = [[] for _ in vars]
+    for n, i in enumerate(seed_list):
+        print(n+1, " / ", len(seed_list))
+        random.seed(i)
+        for j, values in enumerate(vars):
+            start = time.time()
+            results, _ = genetic_algorithm(capacity, bags, *values)
+            delta = time.time() - start
+            times[j].append(delta)
+            best, _ = get_mean_and_best_result(results)
+            best = float(best.get_value())
+            stats[j].append(best)
+
+    for i in range(len(stats)):
+        print("\nConfig ", i+1, " mean: ", np.mean(stats[i]))
+        print("Config ", i+1, " variance: ", np.std(stats[i]))
+        print("Config ", i+1, " average time: ", np.mean(times[i]))
+
+    sns.boxplot(stats)
+    plt.xticks(ticks=[i for i in range(len(stats))],
+               labels=[i+1 for i in range(len(stats))])
+    plt.show()
+
+
+def run_testing(capacity, bags, seed_list):
+    paired_test(capacity, bags, seed_list, [
+                10, 50, 100, 200], "population_size")
+    paired_test(capacity, bags, seed_list, [
+                1.0, 0.8, 0.5], "population_repair")
+    paired_test(capacity, bags, seed_list, [
+                0.05, 0.01, 0.08, 0.1], "mutation_rate")
+    paired_test(capacity, bags, seed_list, [0.8, 0.5, 0.2], "tournament_size")
+    paired_test(capacity, bags, seed_list, [0.2, 0.1, 0.3], "elite_n")
+
+
+def genetic_algorithm(capacity, bags, population_size=200, population_repair=1.0, mutation_rate=0.05, tournament_size=0.2, elite_n=0.1, generations=100):
+    """
+    Genetic algorithm function
+    """
+
+    # Initialisation
+    Solution.bags = bags
+    Solution.capacity = capacity
+    Solution.mutation_rate = mutation_rate
+    Solution.fit_counter = 0
+    history = {"best": [], "mean": []}
+
+    tournament_n = math.floor(population_size * tournament_size)
+
+    population = generate_population(population_size)
+    repair_population(population[:int(population_size * population_repair)])
+
+    # Generation loop
+    with tqdm(total=generations) as bar:
+        for gen in range(generations):
+            calculate_population_fitness(population)
+            population = sorted(
+                population, key=lambda s: s.fitness, reverse=True)
+
+            # history["best"].append(float(max(s.fitness for s in population)))
+            history["best"].append(float(population[0].fitness))
+            history["mean"].append(
+                float(np.mean([s.fitness for s in population])))
+
+            # elitism operation
+            new_population = []
+            for i in range(int(population_size*elite_n)):
+                new_population.append(population[i])
+
+            while len(new_population) < population_size:
+                # tournament selection
+                parent1 = tournament_selection(population, tournament_n)
+                parent2 = tournament_selection(population, tournament_n)
+
+                # crossover and mutation
+                child1, child2 = crossover_weighted(parent1, parent2)
+                child1.mutate()
+                child2.mutate()
+
+                # ensuring a consistent population size
+                if len(new_population) % 2 == 0:
+                    new_population.extend([child1, child2])
+                else:
+                    new_population.append(child1)
+
+            # population replacement and repair
+            population = new_population
+            repair_population(population[:int(population_size * population_repair)])
+            bar.update(1)
+
+    calculate_population_fitness(population)
+    population = sorted(population, key=lambda s: s.fitness, reverse=True)
+
+    # history["best"].append(float(max(s.fitness for s in population)))
+    history["best"].append(float(population[0].fitness))
+    history["mean"].append(float(np.mean([s.fitness for s in population])))
+
+    return population, history
+
+
+
+
+
+FILENAME = '../resources/a280-n279.txt'
 
 def _calculate_value_density(item):
     """Calculates r_i = p_i / w_i[cite: 1132]."""
@@ -666,11 +1074,13 @@ def _calculate_value_density(item):
 if os.path.exists(FILENAME):
     # Load
     print("Loading Data...")
-    c, i, cap, min, max, rr = load_ttp_file(FILENAME)
+    cities, items, capacity, min, max, rr = load_ttp_file(FILENAME)
+
+    print(rr)
         
     # Init
-    ttp = TTP(c, i, cap, min, max, rr)
-    gaco = GACO(ttp, num_ants=30) # Paper suggests 30-50 ants [cite: 333]
+    ttp = TTP_Large(cities, items, capacity, min, max, rr)
+    gaco = GACO_Large(ttp, num_ants=30) # Paper suggests 30-50 ants [cite: 333]
         
     # Run
     best_route, best_dist = gaco.run(max_iterations=50) # Lowered iterations for testing
@@ -684,11 +1094,26 @@ if os.path.exists(FILENAME):
 else:
     print(f"Error: File {FILENAME} not found.")
                     
-
-        
-
-
-
-
-
-
+#
+# if __name__ == "__main__":
+#     capacity, bags = read_file()
+#
+#     seed_list = [i + 30 for i in range(238)]
+#     # run_testing(capacity, bags, seed_list)
+#     config_comp(capacity, bags, seed_list)
+#
+#     start = time.time()
+#     results, history = genetic_algorithm(
+#         capacity, bags, 200, 1.0, 0.05, 0.2, 0.1, generations=100)
+#     delta = time.time() - start
+#     best, mean = get_mean_and_best_result(results)
+#     if best:
+#         print(best)
+#         print("Best: ", best.get_value(), "\nMean: ", mean, "\nTime: ", delta)
+#
+#     sns.lineplot(data=history["best"], label='Config 1', color='skyblue')
+#
+#     plt.xlabel("Generation")
+#     plt.ylabel("Best Fitness")
+#     plt.legend()
+#     plt.show()
