@@ -938,8 +938,51 @@ class GACO_Large:
         if self.ttp.num_cities > 5000:
             print(f"Map size ({self.ttp.num_cities}) too large for Global 2-Opt.")
             print("Skipping to prevent infinite runtime. Relying on simpler 2-opt.")
-            new_route, dist = self.fast_two_opt(route, max_passes=5)
-            return new_route, dist
+            best_route = np.array(route)
+            best_dist = self.calculate_total_distance(best_route)
+            n = len(route) - 1 
+        
+            # Position array for O(1) index lookup
+            pos = np.zeros(self.ttp.num_cities + 1, dtype=int)
+            pos[best_route[:-1]] = np.arange(n)
+            pos[best_route[-1]] = n 
+            for pass_num in range(max_passes):
+                improved = False
+                # Remove the 'break' so we scan the WHOLE route in one pass
+                for i in range(n - 1):
+                    u = best_route[i]
+                    u_next = best_route[i+1]
+                    
+                    neighbors = self.neighbor_indices[u, :20] 
+                    
+                    for v in neighbors:
+                        if v == u_next: continue
+                        j = pos[v]
+                        
+                        if j <= i + 1 or j >= n: continue
+                        v_next = best_route[j+1]
+                        
+                        d_curr = self.ttp.get_dist(u, u_next) + self.ttp.get_dist(v, v_next)
+                        d_new = self.ttp.get_dist(u, v) + self.ttp.get_dist(u_next, v_next)
+                        
+                        if d_new < d_curr:
+                            best_route[i+1:j+1] = best_route[i+1:j+1][::-1]
+                            best_dist -= (d_curr - d_new)
+                            
+                            # Update the pos array for the changed segment
+                            # (Costly, but necessary for correctness if we continue)
+                            pos[best_route[i+1:j+1]] = np.arange(i+1, j+1)
+                            improved = True
+                            
+                            # DO NOT BREAK HERE. 
+                            # Continue to find more swaps in the rest of the route.
+                            # We only break the neighbor loop to move to the next 'i'
+                            break 
+                
+                # If we scanned the whole map and found NO improvements, stop early
+                if not improved: 
+                    break
+            return best_route, best_dist
         
         best_route = list(route)
         n = len(best_route) - 1
@@ -1618,12 +1661,11 @@ class GISS_Solution:
         self.chromosome[flip_to_zero] = 0
         self.repair()
     
-FILENAMES = ['Coursework2/src/resources/a280-n279.txt', 'Coursework2/src/resources/a280-n1395.txt', 'Coursework2/src/resources/a280-n2790.txt', 'Coursework2/src/resources/fnl4461-n4460.txt']
+FILENAMES = ['Coursework2/src/resources/a280-n279.txt', 'Coursework2/src/resources/a280-n1395.txt', 'Coursework2/src/resources/a280-n2790.txt', 'Coursework2/src/resources/fnl4461-n4460.txt','Coursework2/src/resources/fnl4461-n22300.txt','Coursework2/src/resources/fnl4461-n44600.txt','Coursework2/src/resources/pla33810-n33809.txt','Coursework2/src/resources/pla33810-n169045.txt','Coursework2/src/resources/pla33810-n338090.txt']
 
 if __name__ == "__main__":
     for FILENAME in FILENAMES:
         if os.path.exists(FILENAME):
-            FILENAME = "Coursework2/src/resources/pla33810-n338090.txt"
             print(f"Loading Data: {FILENAME}...")
             cities, items, capacity, min_speed, max_speed, rr = load_ttp_file(FILENAME)
 
