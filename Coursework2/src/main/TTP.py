@@ -8,6 +8,7 @@ import random
 from tqdm import tqdm
 import time
 
+#Utilities for data loading
 def load_ttp_file(filepath):
     cities = []
     items = []
@@ -59,6 +60,26 @@ def load_ttp_file(filepath):
                           'weight': float(lineparts[2]), 'city_id': int(lineparts[3])-1})
     return cities, items, capacity, min_speed, max_speed, renting_ratio
 
+#Plot the route for visualisation
+def plot_gaco_route(cities, route, distance, filename="TSP Solution"):
+    cities_np = np.array(cities)
+    route_np = np.array(route) 
+
+    plt.figure(figsize=(12, 8))
+    plt.scatter(cities_np[:, 0], cities_np[:, 1], c='#cccccc', s=10, marker='.', label='Cities')
+    
+    path_coords = cities_np[route_np]
+    plt.plot(path_coords[:, 0], path_coords[:, 1], c='blue', linewidth=1, alpha=0.8, label='GACO Route')
+    
+    start_city = cities_np[route_np[0]]
+    plt.scatter(start_city[0], start_city[1], c='red', s=100, marker='*', zorder=10, label='Start/End')
+
+    plt.title(f"GACO Solution for {os.path.basename(filename)}\nTotal Distance: {distance:.2f}")
+    plt.xlabel("X Coordinate")
+    plt.ylabel("Y Coordinate")
+    plt.legend(loc='upper right')
+    plt.grid(True, linestyle='--', alpha=0.3)
+    plt.show()
 """
 #This algorithm was created using the design from the paper "A two-stage algorithm based on greedy ant colony optimization for travelling thief problem" 
 #class TTP: 
@@ -381,21 +402,27 @@ class TTP_Large:
 
     #No distance matrix for large problems
     def get_dist(self, i, j):
-        """Calculates CEIL_2D distance on the fly."""
+        """Calculates CEIL_2D distance using scalar math (faster for single items)."""
         c1 = self.cities[i]
         c2 = self.cities[j]
-        dist = np.linalg.norm(c1 - c2)
-        return np.ceil(dist)
+        dx = c1[0] - c2[0]
+        dy = c1[1] - c2[1]
+        dist = math.sqrt(dx*dx + dy*dy)
+        return math.ceil(dist)
+    
+#Ant Colony Optimisation (GACO)
 class GACO_Large: 
-    def __init__(self, ttp, num_ants=20, alpha =1, beta=5, Q = 0.3, k_neighbors = 50): 
+    def __init__(self, ttp, num_ants=50, alpha =1, beta=8, rho = 0.1, Q = 0.3, k_neighbors = 100): 
         self.ttp = ttp
         self.num_ants = num_ants 
         self.alpha = alpha #pheromone importance
         self.beta = beta #distance importance
-        self.rho = 0.9 #evapouration rate
+        self.rho = rho #evapouration rate
         self.Q = Q #selection coefficient
         self.k = k_neighbors #only see k neighbours
 
+        self.min_tau = 0.01
+        self.max_tau = 6.0
         print("Building KD-Tree for neighbors")
         self.tree = KDTree(self.ttp.cities)
 
@@ -405,8 +432,9 @@ class GACO_Large:
         self.neighbor_dists = dists[:, 1:]
 
         #use sparse matrix representation for memory efficiency
-        self.pheromone_matrix = np.ones((self.ttp.num_cities, self.k))
+        self.pheromone_matrix = np.full((self.ttp.num_cities, self.k), self.max_tau)
 
+        #Add a small delta to prevent divide by 0 error
         self.heuristic_matrix = 1.0 / (self.neighbor_dists + 1e-10)
         
         self.selection_matrix = np.ones(self.ttp.num_cities)
@@ -521,16 +549,12 @@ class GACO_Large:
         return set([item['id'] for item in selected_items_final])
 
     def _init_selection_matrix(self):
-
         selected_item_ids = self._run_ica()
-
         ica_selected_items = [item for item in self.ttp.items if item['id'] in selected_item_ids]
         #Sort items by decending weight
         ica_selected_items.sort(key=lambda x: x['weight'], reverse=True)
-
         #Select top Q%
         limit = int(len(ica_selected_items) * self.Q)
-
         #modify lambda (selection matrix) for heavy itemed cities
         for i in range(limit): 
             city_id = ica_selected_items[i]['city_id']
@@ -543,7 +567,7 @@ class GACO_Large:
 
         current_city = 0 
         route[0] = 0
-        visited[0] = True 
+        visited[current_city] = True 
         for step in range(1, n_cities): 
             neighbors = self.neighbor_indices[current_city]
             valid_mask = ~visited[neighbors]
@@ -563,41 +587,293 @@ class GACO_Large:
                     # Roulette Wheel Selection
                     next_city = np.random.choice(valid_neighbors, p=probs)
             else: 
-                #pick random unvisited city if no neihbors available
+                #pick nearest global unvisited city
                 unvisited_indices = np.where(~visited)[0]
-                next_city = np.random.choice(unvisited_indices)
+                current_pos = self.ttp.cities[current_city]
+                dists = np.linalg.norm(self.ttp.cities[unvisited_indices] - current_pos, axis=1)
+                nearest_local_idx = np.argmin(dists)
+                next_city = unvisited_indices[nearest_local_idx]
             # 5. Move
             route[step] = next_city
             visited[next_city] = True
             current_city = next_city
-            
         # Return to start
         route[-1] = 0
         return route
 
-    def update_pheromone_trail(self, all_ant_routes, all_ant_distances): 
+    def update_pheromone_trail(self, iter_best_route, iter_best_dist, global_best_route, global_best_dist): 
         #evapouration effects
         self.pheromone_matrix *= (1-self.rho)
-        #deposit
-        #optimisation - only update pheromones for edges that exist
-        for route, dist in zip(all_ant_routes, all_ant_distances): 
-            deposit = 1.0/ dist if dist > 0 else 0
-            #optimisation - only update pheromones for edges that exist
-            for i in range(len(route) -1): 
-                x = route[i]
-                y = route[i+1]
-
-                idx_arr = np.where(self.neighbor_indices[x] == y)[0]
-                if len(idx_arr) > 0: 
-                    k_idx = idx_arr[0]
-                    self.pheromone_matrix[x, k_idx] += deposit
-
-                idx_arr_y = np.where(self.neighbor_indices[y] == x)[0]
-                if len(idx_arr_y) > 0: 
-                    k_idx_y = idx_arr_y[0]
-                    self.pheromone_matrix[y, k_idx_y] += deposit
+        #Optimisation: have impact from the best route of the iteration, and the global best route.
+        deposit_ib = 1.0/iter_best_dist if iter_best_dist > 0 else 0
+        self._deposit_on_route(iter_best_route, deposit_ib)
+        deposit_gb = 2.0 / global_best_dist if global_best_dist > 0 else 0
+        self._deposit_on_route(global_best_route, deposit_gb)
+        np.clip(self.pheromone_matrix, self.min_tau, self.max_tau, out=self.pheromone_matrix)
 
 
+
+import numpy as np
+from scipy.spatial import KDTree
+
+class GACO_Large: 
+    def __init__(self, ttp, num_ants=50, alpha=1.0, beta=8.0, rho=0.1, Q=0.3, k_neighbors=100): 
+        """
+        Initializes the Ant Colony Optimization for Large instances.
+        Uses Candidate Lists (K-Nearest Neighbors) to avoid O(N^2) memory usage.
+        """
+        self.ttp = ttp
+        self.num_ants = num_ants 
+        self.alpha = alpha      # Importance of Pheromone (History)
+        self.beta = beta        # Importance of Heuristic (Distance/Greediness)
+        self.rho = rho          # Evaporation rate (Memory retention)
+        self.Q = Q              # Selection coefficient for Item Selection bias
+        self.k = k_neighbors    # Size of candidate list (only look at k closest cities)
+
+        # Max-Min Ant System (MMAS) bounds to prevent stagnation
+        self.min_tau = 0.01
+        self.max_tau = 6.0
+
+        print(f"Building KD-Tree for {self.ttp.num_cities} cities...")
+        # OPTIMIZATION: KD-Tree allows for fast spatial queries
+        self.tree = KDTree(self.ttp.cities)
+
+        # Pre-calculate only the K-Nearest Neighbors for every city.
+        # instead of a full N*N distance matrix.
+        dists, idxs = self.tree.query(self.ttp.cities, k=self.k + 1)
+        self.neighbor_indices = idxs[:, 1:]   # Indices of neighbors (excluding self)
+        self.neighbor_dists = dists[:, 1:]    # Distances to neighbors
+
+        # Sparse Pheromone Matrix: shape (Num_Cities, k). 
+        # We only track pheromones on edges connecting to neighbors.
+        self.pheromone_matrix = np.full((self.ttp.num_cities, self.k), self.max_tau)
+        
+        # Heuristic Matrix (Eta): Inverse distance (1/d). Closer cities = higher desirability.
+        self.heuristic_matrix = 1.0 / (self.neighbor_dists + 1e-10)
+        
+        # Selection Matrix: Used to bias the ACO based on item distribution (TTP specific)
+        self.selection_matrix = np.ones(self.ttp.num_cities)
+        print("Running ICA/ISA initialization...")
+        self._init_selection_matrix()
+
+    def _run_ISA(self, type1_items): 
+        """
+        Item Selection Algorithm (ISA):
+        Uses a grid-based spatial hashing approach to find high-density areas 
+        of valuable items.
+        """
+        THETA_H = 1/10; THETA_G = 1/3
+        
+        # Extract coordinates
+        x_coords = self.ttp.cities[:,0]; y_coords = self.ttp.cities[:,1]
+        X_min, X_max = np.min(x_coords), np.max(x_coords)
+        Y_min, Y_max = np.min(y_coords), np.max(y_coords)
+        
+        # Define grid cell sizes
+        g = np.min([X_max - X_min, Y_max-Y_min]) * THETA_G
+        h_x = (X_max - X_min) * THETA_H; h_y = (Y_max - Y_min) * THETA_H
+        
+        areas = []
+        x = X_min 
+        # Sliding window over the map to count items
+        while x + h_x < X_max: 
+            y = Y_min 
+            while y + h_y < Y_max: 
+                current_area = {'x_min': x, 'x_max': x+g, 'y_min': y, 'y_max': y+g }
+                count = 0
+                for item in type1_items:
+                    city_coords = self.ttp.cities[item['city_id']]
+                    cx, cy = city_coords[0], city_coords[1]
+                    # Check if item is inside the current grid box
+                    if (current_area['x_min'] <= cx < current_area['x_max'] and 
+                        current_area['y_min'] <= cy < current_area['y_max']): 
+                        count += 1 
+                areas.append({'count': count, 'area': current_area})
+                y += h_y
+            x += h_x
+        # Return areas sorted by item count (densest first)
+        return sorted(areas, key=lambda a: a['count'], reverse = True)
+
+    def _run_ica(self): 
+        """
+        Item Clustering Algorithm (ICA):
+        Categorizes items by value density and selects a 'knapsack plan' 
+        focused on high-density geographical areas.
+        """
+        def _calculate_value_density(item):
+            return item['value'] / item['weight'] if item['weight'] > 0 else 0
+        
+        CHI = 0.5 # Capacity threshold
+        for item in self.ttp.items: 
+            item['density'] = _calculate_value_density(item)
+            
+        # Sort all items by Value/Weight ratio
+        sorted_items_density = sorted(self.ttp.items, key=lambda x: x['density'], reverse=True)
+        current_weight = 0
+        selected_items_final = []
+        type1 = []; type2 = []
+        max_type1_weight = self.ttp.capacity * CHI
+        
+        # Split items into Type 1 (High Density) and Type 2 (Remainder)
+        for item in sorted_items_density: 
+            if current_weight + item['weight'] <= max_type1_weight: 
+                type1.append(item)
+                current_weight += item['weight']
+                selected_items_final.append(item) 
+            else: 
+                type2.append(item)
+        
+        # Identify dense areas using ISA
+        sorted_areas = self._run_ISA(type1)
+        unselected_type2 = type2 
+        
+        # Attempt to fill remaining capacity with Type 2 items located in those dense areas
+        for area_data in sorted_areas: 
+            area = area_data['area']
+            items_to_select= []
+            for item in unselected_type2: 
+                city_coords = self.ttp.cities[item['city_id']]
+                cx, cy = city_coords[0], city_coords[1]
+                
+                is_in_area = (area['x_min'] <= cx < area['x_max'] and area['y_min'] <= cy < area['y_max'])
+                can_fit = current_weight + item['weight'] <= self.ttp.capacity
+                
+                if is_in_area and can_fit:
+                        selected_items_final.append(item)
+                        current_weight += item['weight']
+                else:
+                    items_to_select.append(item)
+            unselected_type2 = items_to_select
+            if current_weight >= self.ttp.capacity: break 
+            
+        return set([item['id'] for item in selected_items_final])
+
+    def _init_selection_matrix(self):
+        """
+        Uses the result of ICA to bias the ant movement.
+        Cities with selected heavy items might be penalized (0.1) to encourage 
+        picking them up later in the route (reducing travel cost).
+        """
+        selected_item_ids = self._run_ica()
+        ica_selected_items = [item for item in self.ttp.items if item['id'] in selected_item_ids]
+        ica_selected_items.sort(key=lambda x: x['weight'], reverse=True)
+        
+        # Apply bias to top Q% of heavy items
+        limit = int(len(ica_selected_items) * self.Q)
+        for i in range(limit): 
+            city_id = ica_selected_items[i]['city_id']
+            # Modify the selection matrix at this city
+            self.selection_matrix[city_id] = 0.1 
+
+    def construct_route(self): 
+        """
+        Constructs a single route for one ant.
+        Includes heuristics for probability and a 'Rescue Mode' for dead ends.
+        """
+        n_cities = self.ttp.num_cities
+        route = np.zeros(n_cities + 1, dtype=int)
+        visited = np.zeros(n_cities, dtype=bool)
+
+        # 1. Start at a random city
+        current_city = np.random.randint(0, n_cities)
+        route[0] = current_city
+        visited[current_city] = True 
+        
+        alpha = self.alpha
+        beta = self.beta
+        
+        # 2. Build the rest of the tour
+        for step in range(1, n_cities): 
+            neighbors = self.neighbor_indices[current_city]
+            valid_mask = ~visited[neighbors]
+            
+            # CASE A: Neighbors available (Standard ACO)
+            if valid_mask.any():
+                valid_indices = np.where(valid_mask)[0]
+                valid_neighbors = neighbors[valid_indices]
+                
+                # Retrieve Pheromone (tau) and Distance Heuristic (eta)
+                tau = self.pheromone_matrix[current_city, valid_indices]
+                eta = self.heuristic_matrix[current_city, valid_indices]
+                # Apply TTP-specific Item Bias (lam)
+                lam = self.selection_matrix[valid_neighbors]
+                
+                # Calculate probability formula: (tau^alpha) * (eta^beta) * lam
+                probs = (tau ** alpha) * (eta ** beta) * lam
+                
+                # --- FAST ROULETTE WHEEL SELECTION ---
+                cumsum = np.cumsum(probs)
+                total = cumsum[-1]
+                
+                if total == 0:
+                    next_city = valid_neighbors[np.random.randint(len(valid_neighbors))]
+                else:
+                    # Binary search is faster than linear scan for large K
+                    r = np.random.random() * total
+                    idx = np.searchsorted(cumsum, r)
+                    next_city = valid_neighbors[min(idx, len(valid_neighbors)-1)]
+
+            # CASE B: No neighbors available (Rescue Mode)
+            else: 
+                unvisited_indices = np.where(~visited)[0]
+                
+                # OPTIMIZATION: Instead of calculating distance to ALL unvisited nodes (slow),
+                # sample 50 random unvisited nodes and pick the closest one.
+                # This prevents "teleporting" across the map while keeping speed high.
+                sample_size = min(50, len(unvisited_indices))
+                candidates = np.random.choice(unvisited_indices, size=sample_size, replace=False)
+                
+                current_pos = self.ttp.cities[current_city]
+                
+                # Euclidean distance check on sample
+                dists = np.sum((self.ttp.cities[candidates] - current_pos)**2, axis=1)
+                nearest_sample_idx = np.argmin(dists)
+                
+                next_city = candidates[nearest_sample_idx]
+                
+            route[step] = next_city
+            visited[next_city] = True
+            current_city = next_city
+            
+        # Return to start to close the loop
+        route[-1] = route[0]
+        return route
+
+    def update_pheromone_trail(self, iter_best_route, iter_best_dist, global_best_route, global_best_dist): 
+        """
+        Updates pheromones based on MMAS rules.
+        """
+        # 1. Global Evaporation
+        self.pheromone_matrix *= (1.0 - self.rho)
+        
+        # 2. Deposit for Iteration Best (Exploitation of current loop)
+        deposit_ib = 1.0 / iter_best_dist if iter_best_dist > 0 else 0
+        self._deposit_on_route(iter_best_route, deposit_ib)
+        
+        # 3. Deposit for Global Best (Strong Elitism)
+        deposit_gb = 2.0 / global_best_dist if global_best_dist > 0 else 0
+        self._deposit_on_route(global_best_route, deposit_gb)
+        
+        # 4. Clamp values (MMAS Requirement)
+        np.clip(self.pheromone_matrix, self.min_tau, self.max_tau, out=self.pheromone_matrix)
+
+    def _deposit_on_route(self, route, amount):
+        """Helper to deposit pheromone on edges existing in the neighbor list."""
+        for i in range(len(route) -1): 
+            x = route[i]
+            y = route[i+1]
+            
+            # Find index of Y in X's neighbor list
+            idx_arr = np.where(self.neighbor_indices[x] == y)[0]
+            if len(idx_arr) > 0: 
+                k_idx = idx_arr[0]
+                self.pheromone_matrix[x, k_idx] += amount
+            
+            # Symmetric update (Undirected graph)
+            idx_arr_y = np.where(self.neighbor_indices[y] == x)[0]
+            if len(idx_arr_y) > 0: 
+                k_idx_y = idx_arr_y[0]
+                self.pheromone_matrix[y, k_idx_y] += amount
 
     def calculate_total_distance(self, route): 
         total = 0.0
@@ -605,21 +881,80 @@ class GACO_Large:
             total += self.ttp.get_dist(route[i], route[i+1])
         return total
     
-    def two_opt(self, route, max_passes=3):
-        best_route = list(route)
-        best_distance = self.calculate_total_distance(best_route)
+    def fast_two_opt(self, route, max_passes=1):
+        """
+        Optimized 2-opt Local Search.
+        Only considers swaps if the new node is within the top 20 neighbors.
+        O(N * 20) complexity instead of O(N^2).
+        """
+        best_route = np.array(route)
+        best_dist = self.calculate_total_distance(best_route)
+        n = len(route) - 1 
         
+        # Position array for O(1) index lookup
+        pos = np.zeros(self.ttp.num_cities + 1, dtype=int)
+        pos[best_route[:-1]] = np.arange(n)
+        pos[best_route[-1]] = n 
+
         for _ in range(max_passes):
             improved = False
-            for i in range(1, len(best_route) - 2):
+            for i in range(n - 1):
+                u = best_route[i]
+                u_next = best_route[i+1]
                 
-                # FIX: Limit must be len(best_route) - 1 so that j+1 is valid
-                limit = int(np.min([i + 500, len(best_route) - 1]))
+                # Heuristic Pruning: Only check close neighbors
+                neighbors = self.neighbor_indices[u, :20] 
                 
-                for j in range(i + 1, limit): 
-                    if j - i == 1: continue
+                for v in neighbors:
+                    if v == u_next: continue
+                    j = pos[v]
                     
-                    A = best_route[i-1]; B = best_route[i]
+                    # Ensure valid swap order
+                    if j <= i + 1 or j >= n: continue
+                    v_next = best_route[j+1]
+                    
+                    # Calculate gain
+                    d_curr = self.ttp.get_dist(u, u_next) + self.ttp.get_dist(v, v_next)
+                    d_new = self.ttp.get_dist(u, v) + self.ttp.get_dist(u_next, v_next)
+                    
+                    if d_new < d_curr:
+                        # Perform swap
+                        best_route[i+1:j+1] = best_route[i+1:j+1][::-1]
+                        best_dist -= (d_curr - d_new)
+                        # Update position array
+                        pos[best_route[i+1:j+1]] = np.arange(i+1, j+1)
+                        improved = True
+                        break # First improvement heuristic
+                if improved: break
+            if not improved: break
+        return best_route, best_dist
+    
+    def full_two_opt(self, route, max_passes=5):
+        """
+        Full O(N^2) 2-opt. 
+        Necessary to fix 'crossing lines' (Global intersections) that fast 2-opt misses.
+        """
+        # Safety guard for massive datasets
+        if self.ttp.num_cities > 5000:
+            print(f"Map size ({self.ttp.num_cities}) too large for Global 2-Opt.")
+            print("Skipping to prevent infinite runtime. Relying on simpler 2-opt.")
+            new_route, dist = self.fast_two_opt(route, max_passes=5)
+            return new_route, dist
+        
+        best_route = list(route)
+        n = len(best_route) - 1
+        improved = True 
+        count = 0 
+        print(f"Full 2-opt (Max passes: {max_passes})...")
+        
+        while improved and count<max_passes: 
+            improved = False 
+            count += 1 
+            swaps_in_pass = 0 
+            # Iterate every edge (i, i+1) against every other edge (j, j+1)
+            for i in range(n-1):           
+                A = best_route[i-1]; B = best_route[i] # Warning: Indices slightly offset here, typically A=i, B=i+1
+                for j in range(i+2, n):
                     C = best_route[j];   D = best_route[j+1]
                     
                     d_old = self.ttp.get_dist(A, B) + self.ttp.get_dist(C, D)
@@ -627,40 +962,53 @@ class GACO_Large:
                     
                     if d_new < d_old:
                         best_route[i:j+1] = best_route[i:j+1][::-1]
-                        best_distance -= (d_old - d_new)
-                        improved = True
-                        break 
-                if improved: break
-            if not improved: break
+                        improved = True 
+                        swaps_in_pass += 1 
+            print(f"Completed Pass {count}: Performed {swaps_in_pass} swaps.")
+        final_dist = self.calculate_total_distance(best_route)
+        return best_route, final_dist
             
-        return best_route, best_distance
     
     def run(self, max_iterations =100): 
+        """
+        Main execution loop.
+        """
         best_global_route = None
         best_global_distance = float('inf')
 
         for iteration in range(max_iterations): 
-            all_routes = []
-            all_distances = []
+            iter_routes = []
+            iter_distances = []
 
+            # 1. Ant Construction Phase
             for ant in range(self.num_ants): 
                 route = self.construct_route()
                 dist = self.calculate_total_distance(route)
 
-                all_routes.append(route)
-                all_distances.append(dist)
+                iter_routes.append(route)
+                iter_distances.append(dist)
+            
+            # 2. Find Best Ant in this iteration
+            min_idx = np.argmin(iter_distances)
+            iter_best_route = iter_routes[min_idx]
+            
+            # 3. Educate the Ant (Local Search BEFORE pheromone deposit)
+            # This makes the deposited pheromones much stronger
+            opt_route, opt_dist = self.fast_two_opt(iter_best_route, max_passes=1)
+            
+            if opt_dist < best_global_distance: 
+                    best_global_distance = opt_dist
+                    best_global_route = opt_route
 
-                if dist < best_global_distance: 
-                    best_global_distance = dist
-                    best_global_route = route
+            # 4. Update Pheromones
+            self.update_pheromone_trail(opt_route, opt_dist, best_global_route, best_global_distance)
+            print(f"finished iteration {iteration}, best distance {best_global_distance}")
 
-            self.update_pheromone_trail(all_routes, all_distances)
-            print(f"Iteration {iteration}: Best Distance = {best_global_distance}")
-
-        #finally run 2-opt optimization on best route
-        print("Running 2-OPT optimization...")
-        final_route, final_dist = self.two_opt(best_global_route)
-        return final_route, final_dist
+        # 5. Final Polish: Run expensive Full 2-Opt on the final result
+        print("Running Full 2-OPT optimization...")
+        final_route, final_dist = self.full_two_opt(best_global_route)
+        print(f"Final Optimization: {best_global_distance} -> {final_dist}")
+        return [(final_route, final_dist)]
 
 
 ################## GA ####################
@@ -1070,29 +1418,252 @@ def _calculate_value_density(item):
     if item['weight'] == 0:
         return float('inf')
     return item['value'] / item['weight']
+
+
+#GISS Algorithm: Basic implementation 
+import numpy as np
+import random
+from tqdm import tqdm
+
+class GISS_Optimiser: 
+    """
+    Controller class for the GISS Algorithm.
+    """
+    def __init__(self, ttp, route):
+        self.ttp = ttp
+        self.route = route
+        self.bags = ttp.items
+        self.capacity = ttp.capacity
+        
+        # Changed to a pre-calculated dictionary (CityID -> Items) to allow for faster lookups, saving time. 
+        self.items_map = {}
+        for idx, item in enumerate(ttp.items):
+            cid = item['city_id']
+            if cid not in self.items_map: self.items_map[cid] = []
+            self.items_map[cid].append((idx, item['weight']))
+
+        # Pre-calculating route also saves time. 
+        self.route_distances = []
+        for k in range(len(route) - 1):
+            self.route_distances.append(ttp.get_dist(route[k], route[k+1]))
+
+        # Replaced uniform random selection with a position-based probability curve that reflects favour of solutions at the end. 
+        city_order_map = {city_id: index for index, city_id in enumerate(route)}
+        num_items = len(ttp.items)
+        self.item_bias_probs = np.zeros(num_items)
+        total_cities = len(route)
+        
+        for idx, item in enumerate(ttp.items):
+            city_id = item['city_id']
+            route_pos = city_order_map.get(city_id, 0)
+            normalized_pos = route_pos / total_cities
+            self.item_bias_probs[idx] = (normalized_pos ** 4)
+
+    def tournament_selection(self, population, tournament_size=5):
+        candidates = random.sample(population, tournament_size)
+        return max(candidates, key=lambda s: s.fitness)
+
+    def crossover(self, parent1, parent2):
+        child = GISS_Solution(self, initialise=False)
+        cut_point = random.randint(1, len(parent1.chromosome) - 1)
+        child.chromosome = np.concatenate((parent1.chromosome[:cut_point], parent2.chromosome[cut_point:]))
+        child.repair()
+        return child
+
+    def greedy_pruning(self, solution):
+        """
+        Added a final local search step. This iterates through selected items 
+        and drops them if the rent savings outweigh the item value, 
+        fine-tuning the result.
+        """
+        current_best = solution.fitness
+        picked_indices = np.where(solution.chromosome == 1)[0]
+        if len(picked_indices) == 0: return solution
+
+        iterator = picked_indices if len(picked_indices) < 1000 else tqdm(picked_indices, desc="Pruning")
+        
+        for idx in iterator:
+            solution.chromosome[idx] = 0
+            solution.calc_fitness()
+            if solution.fitness > current_best:
+                current_best = solution.fitness
+            else:
+                solution.chromosome[idx] = 1
+                solution.fitness = current_best
+        return solution
+
+    def run(self, population_size=50, iterations=2000):
+        # Switched from a Generational model to a Steady-State model (replace worst), can try both. 
+        population = []
+        for _ in range(population_size):
+            sol = GISS_Solution(self, initialise=True)
+            sol.calc_fitness()
+            population.append(sol)
+
+        with tqdm(total=iterations, desc="GISS Steady-State") as bar:
+            for i in range(iterations):
+                parent1 = self.tournament_selection(population)
+                parent2 = self.tournament_selection(population)
+                
+                child = self.crossover(parent1, parent2)
+                child.mutate()
+                child.calc_fitness()
+                
+                # replacement of the worst individual
+                population.sort(key=lambda s: s.fitness) 
+                if child.fitness > population[0].fitness:
+                    population[0] = child
+                
+                bar.update(1)
+
+        population.sort(key=lambda s: s.fitness, reverse=True)
+        best_raw = population[0]
+        return self.greedy_pruning(best_raw)
+
+
+class GISS_Solution: 
+    def __init__(self, optimiser, initialise=True): 
+        self.optimiser = optimiser
+        self.fitness = -float('inf')
+
+        if initialise: 
+            # Implemented biased initialization using the pre-calculated item_bias_probs, so that chromosomes are more valid to problem.
+            rands = np.random.random(len(optimiser.bags))
+            thresholds = optimiser.item_bias_probs * 0.05 
+            self.chromosome = (rands < thresholds).astype(int)
+        else: 
+            self.chromosome = np.zeros(len(optimiser.bags), dtype=int)
+
+    def get_weight(self): 
+        indices = np.where(self.chromosome==1)[0]
+        w = 0
+        for i in indices: 
+            w+= self.optimiser.bags[i]['weight']
+        return w 
     
-if os.path.exists(FILENAME):
-    # Load
-    print("Loading Data...")
-    cities, items, capacity, min, max, rr = load_ttp_file(FILENAME)
+    def get_value(self):
+        indices = np.where(self.chromosome==1)[0]
+        v = 0 
+        for i in indices: 
+            v += self.optimiser.bags[i]['value'] 
+        return v 
+    
+    def repair(self): 
+        current_weight = self.get_weight()
+        if current_weight > self.optimiser.capacity: 
+            ones = np.where(self.chromosome == 1)[0]
+            np.random.shuffle(ones)
+            for idx in ones: 
+                if current_weight <= self.optimiser.capacity: break 
+                self.chromosome[idx] = 0 
+                current_weight -= self.optimiser.bags[idx]['weight']
+    
+    def calc_fitness(self): 
+        """
+        Replaced the standard Knapsack fitness (Value - Weight) with a full TTP simulation.
+        This accounts for the renting ratio and velocity degradation over time.
+        """
+        current_weight = self.get_weight()
+        if current_weight > self.optimiser.capacity: 
+            self.fitness = -float('inf')
+            return 
+            
+        total_profit = self.get_value()
+        total_time = 0 
+        current_sack_weight = 0
 
-    print(rr)
-        
-    # Init
-    ttp = TTP_Large(cities, items, capacity, min, max, rr)
-    gaco = GACO_Large(ttp, num_ants=30) # Paper suggests 30-50 ants [cite: 333]
-        
-    # Run
-    best_route, best_dist = gaco.run(max_iterations=50) # Lowered iterations for testing
+        vel_span = self.optimiser.ttp.max_speed - self.optimiser.ttp.min_speed
+        cap = self.optimiser.capacity
 
+        for i in range(len(self.optimiser.route) - 1):
+            # Uses cached distances
+            dist = self.optimiser.route_distances[i] 
+            
+            # Calculates velocity dynamically based on current sack weight
+            velocity = self.optimiser.ttp.max_speed - (current_sack_weight / cap) * vel_span
+            if velocity < self.optimiser.ttp.min_speed: 
+                velocity = self.optimiser.ttp.min_speed
+                
+            total_time += dist / velocity
+            
+            # Updates weight only when reaching the specific city
+            next_city = self.optimiser.route[i+1]
+            if next_city in self.optimiser.items_map:
+                for item_idx, item_weight in self.optimiser.items_map[next_city]:
+                    if self.chromosome[item_idx] == 1:
+                        current_sack_weight += item_weight
+
+        # Final fitness is Profit minus Rent Cost
+        self.fitness = total_profit - (total_time * self.optimiser.ttp.renting_ratio)
+
+    def mutate(self):
+        """
+        Replaced static mutation with dynamic, asymmetric mutation that nytates bested off of the biases from the route.
+        """
+        n_items = len(self.chromosome)
+        base_rate = 1.0 / n_items
+        rands = np.random.random(n_items)
         
-    print("-" * 30)
-    print(f"OPTIMIZATION COMPLETE")
-    print(f"Final Best Distance: {best_dist}")
-    print(f"Route Preview: {best_route[:10]}... -> {best_route[-10:]}")
-    print("-" * 30)
-else:
-    print(f"Error: File {FILENAME} not found.")
+        # Scale mutation probability by item position
+        rate_add_dynamic = base_rate * (self.optimiser.item_bias_probs + 0.1) * 5.0
+        rate_drop = 0.5
+        
+        zeros = (self.chromosome == 0)
+        ones = (self.chromosome == 1)
+        
+        flip_to_one = zeros & (rands < rate_add_dynamic)
+        flip_to_zero = ones & (rands < rate_drop)
+        
+        self.chromosome[flip_to_one] = 1
+        self.chromosome[flip_to_zero] = 0
+        self.repair()
+    
+FILENAMES = ['Coursework2/src/resources/a280-n279.txt', 'Coursework2/src/resources/a280-n1395.txt', 'Coursework2/src/resources/a280-n2790.txt', 'Coursework2/src/resources/fnl4461-n4460.txt']
+
+if __name__ == "__main__":
+    for FILENAME in FILENAMES:
+        if os.path.exists(FILENAME):
+            FILENAME = "Coursework2/src/resources/pla33810-n338090.txt"
+            print(f"Loading Data: {FILENAME}...")
+            cities, items, capacity, min_speed, max_speed, rr = load_ttp_file(FILENAME)
+
+            # 1. Initialize TTP and ACO
+            ttp = TTP_Large(cities, items, capacity, min_speed, max_speed, rr)
+            # You can tune num_ants and max_iterations here
+            gaco = GACO_Large(ttp, num_ants=30, k_neighbors=100) 
+                
+            # 2. Run ACO
+            top_routes = gaco.run(max_iterations=50) 
+            best_route = top_routes[0][0]
+            best_dist = top_routes[0][1]
+            
+            print(f"Plotting best route with distance: {best_dist:.2f}")
+            plot_gaco_route(cities, best_route, best_dist, FILENAME)
+
+            print("-" * 30)
+            print(f"ACO COMPLETE. Optimizing Packing...")
+            print("-" * 30)
+            
+            # 3. Run GISS (Genetic Algorithm)
+            # Create the optimizer controller
+            giss_opt = GISS_Optimiser(ttp, best_route)
+            best_giss_solution = giss_opt.run(population_size=50, iterations=3000)
+            
+            # 4. Compare vs Empty Baseline
+            baseline = GISS_Solution(giss_opt, initialise=False)
+            baseline.chromosome[:] = 0
+            baseline.calc_fitness()
+            
+            print("\n" + "="*30)
+            print(f"🏆 FINAL RESULTS: {FILENAME} 🏆")
+            print("="*30)
+            print(f"Empty Bag Score:   {baseline.fitness:.2f}")
+            print(f"GISS Best Score:   {best_giss_solution.fitness:.2f}")
+            print(f"Profit Gained:     {best_giss_solution.get_value():.2f}")
+            print(f"Weight Filled:     {best_giss_solution.get_weight():.2f} / {ttp.capacity}")
+            print("="*30)
+        else:
+            print(f"File not found: {FILENAME}")
                     
 #
 # if __name__ == "__main__":
