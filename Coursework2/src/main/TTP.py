@@ -1,5 +1,7 @@
 import numpy as np
 import os
+
+from h5py.h5o import visit
 from scipy.spatial import KDTree
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -666,17 +668,35 @@ class GACO_Large:
 ################## GA ####################
 
 
+
+
+
 class Solution:
     """
     Class implementation of a solution
     It contains the necessary methods for manipulating individual solutions
     """
     bags = []
-    capacity = 0
-    mutation_rate = 0.01
+    cities = []
+    max_weight = 0
+    max_velocity = 0
+    min_velocity = 0
+
+    @classmethod
+    def initialise(cls, bags, cities, max_weight, max_velocity, min_velocity):
+        cls.bags = bags
+        cls.cities = cities
+        cls.max_weight = max_weight
+        cls.max_velocity = max_velocity
+        cls.min_velocity = min_velocity
 
     def __init__(self):
-        self.chromosome = np.random.randint(0, 2, size=len(Solution.bags))
+        # self.chromosome = np.random.randint(0, 2, size=len(Solution.bags))
+
+        self.chromosome = []
+        for items in Solution.bags:
+            self.chromosome.append(np.random.randint(0, 2, size=len(items)))
+
         self.fitness = None
 
     def __str__(self):
@@ -782,14 +802,31 @@ class Solution:
         else:
             return index
 
+    def calc_time(self):
+        weight = 0
+        total_time = 0
 
-def calc_velocity(weight, w_max, v_max, v_min):
-    if weight <= max:
-        velocity = v_max - weight/w_max * (v_max - v_min)
+        total_time += calc_distance(cities[0], cities[1]) / calc_velocity(weight)
+        for i, items in enumerate(self.chromosome[1::]):
+            for j, item in enumerate(items):
+                weight += Solution.bags[i][j] * item
+
+            velocity = calc_velocity(weight)
+            total_time += calc_distance(cities[i+1], cities[i+2]) / velocity
+
+        return total_time
+
+def calc_distance(city1, city2):
+    x = city1[0] - city2[0]
+    y = city1[1] - city2[1]
+    return np.sqrt(x**2 + y**2)
+
+def calc_velocity(weight):
+    if weight <= Solution.max_weight:
+        velocity = Solution.max_velocity - weight/Solution.max_weight * (Solution.max_velocity - Solution.min_velocity)
     else:
-        velocity = v_min
+        velocity = Solution.min_velocity
     return velocity
-
 
 def crossover_weighted(parent1, parent2):
     """
@@ -1076,7 +1113,7 @@ if os.path.exists(FILENAME):
     print("Loading Data...")
     cities, items, capacity, min, max, rr = load_ttp_file(FILENAME)
 
-    print(rr)
+    print(items)
         
     # Init
     ttp = TTP_Large(cities, items, capacity, min, max, rr)
