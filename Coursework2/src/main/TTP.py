@@ -676,7 +676,7 @@ class Solution:
     Class implementation of a solution
     It contains the necessary methods for manipulating individual solutions
     """
-    bags = []
+    bags = {}
     cities = []
     max_weight = 0
     max_velocity = 0
@@ -691,11 +691,9 @@ class Solution:
         cls.min_velocity = min_velocity
 
     def __init__(self):
-        # self.chromosome = np.random.randint(0, 2, size=len(Solution.bags))
-
-        self.chromosome = []
-        for items in Solution.bags:
-            self.chromosome.append(np.random.randint(0, 2, size=len(items)))
+        self.chromosome = {}
+        for id, items in Solution.bags.items():
+            self.chromosome[id] = np.random.randint(0, 2, size=len(items))
 
         self.fitness = None
 
@@ -806,13 +804,12 @@ class Solution:
         weight = 0
         total_time = 0
 
-        total_time += calc_distance(cities[0], cities[1]) / calc_velocity(weight)
-        for i, items in enumerate(self.chromosome[1::]):
+        for i, items in self.chromosome.items():
             for j, item in enumerate(items):
-                weight += Solution.bags[i][j] * item
+                weight += Solution.bags[i][j][0] * item
 
             velocity = calc_velocity(weight)
-            total_time += calc_distance(cities[i+1], cities[i+2]) / velocity
+            total_time += calc_distance(cities[i], cities[i+1]) / velocity
 
         return total_time
 
@@ -1113,7 +1110,7 @@ if os.path.exists(FILENAME):
     print("Loading Data...")
     cities, items, capacity, min, max, rr = load_ttp_file(FILENAME)
 
-    print(items)
+    print(cities)
         
     # Init
     ttp = TTP_Large(cities, items, capacity, min, max, rr)
@@ -1128,9 +1125,34 @@ if os.path.exists(FILENAME):
     print(f"Final Best Distance: {best_dist}")
     print(f"Route Preview: {best_route[:10]}... -> {best_route[-10:]}")
     print("-" * 30)
+
+    print(best_route)
+    possible_items = []
+    city_route = []
+    for num in best_route:
+        city_route.append(cities[num])
+        for item in items:
+            if item['city_id'] == num:
+                possible_items.append(item)
+
+    bags = {}
+    for item in possible_items:
+        if item['city_id'] in bags:
+            bags[item['city_id']].append((item['weight'], item['value']))
+        else:
+            bags[item['city_id']] = [(item['weight'], item['value'])]
+
+    print(bags)
+
+    Solution.initialise(bags, cities, capacity, max, min)
+
+    sol = Solution()
+
 else:
     print(f"Error: File {FILENAME} not found.")
-                    
+
+
+
 #
 # if __name__ == "__main__":
 #     capacity, bags = read_file()
