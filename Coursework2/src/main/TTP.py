@@ -120,9 +120,9 @@ class GACO_Large:
         self.min_tau = 0.01
         self.max_tau = 6.0
         print("Building KD-Tree for neighbors")
-        self.tree = KDTree(self.ttp.route)
+        self.tree = KDTree(self.ttp.cities)
 
-        dists, idxs = self.tree.query(self.ttp.route, k=self.k + 1)
+        dists, idxs = self.tree.query(self.ttp.cities, k=self.k + 1)
 
         self.neighbor_indices = idxs[:, 1:]
         self.neighbor_dists = dists[:, 1:]
@@ -141,8 +141,8 @@ class GACO_Large:
     def _run_ISA(self, type1_items): 
         THETA_H = 1/10 
         THETA_G = 1/3
-        x_coords = self.ttp.route[:,0]
-        y_coords = self.ttp.route[:,1]
+        x_coords = self.ttp.cities[:,0]
+        y_coords = self.ttp.cities[:,1]
 
         X_min, X_max = np.min(x_coords), np.max(x_coords)
         Y_min, Y_max = np.min(y_coords), np.max(y_coords)
@@ -166,7 +166,7 @@ class GACO_Large:
                 #count high-value items in this box
                 count = 0
                 for item in type1_items:
-                    city_coords = self.ttp.route[item['city_id']]
+                    city_coords = self.ttp.cities[item['city_id']]
                     cx, cy = city_coords[0], city_coords[1]
 
                     if (current_area['x_min'] <= cx < current_area['x_max'] and 
@@ -222,7 +222,7 @@ class GACO_Large:
 
             for item in unselected_type2: 
                 #run similar to ISA for type2 items 
-                city_coords = self.ttp.route[item['city_id']]
+                city_coords = self.ttp.cities[item['city_id']]
                 cx, cy = city_coords[0], city_coords[1]
                 
                 # Check if item location Lk is in area [cite: 1147, 1160]
@@ -285,8 +285,8 @@ class GACO_Large:
             else: 
                 #pick nearest global unvisited city
                 unvisited_indices = np.where(~visited)[0]
-                current_pos = self.ttp.route[current_city]
-                dists = np.linalg.norm(self.ttp.route[unvisited_indices] - current_pos, axis=1)
+                current_pos = self.ttp.cities[current_city]
+                dists = np.linalg.norm(self.ttp.cities[unvisited_indices] - current_pos, axis=1)
                 nearest_local_idx = np.argmin(dists)
                 next_city = unvisited_indices[nearest_local_idx]
             # 5. Move
@@ -332,11 +332,11 @@ class GACO_Large:
 
         print(f"Building KD-Tree for {self.ttp.num_cities} cities...")
         # OPTIMIZATION: KD-Tree allows for fast spatial queries
-        self.tree = KDTree(self.ttp.route)
+        self.tree = KDTree(self.ttp.cities)
 
         # Pre-calculate only the K-Nearest Neighbors for every city.
         # instead of a full N*N distance matrix.
-        dists, idxs = self.tree.query(self.ttp.route, k=self.k + 1)
+        dists, idxs = self.tree.query(self.ttp.cities, k=self.k + 1)
         self.neighbor_indices = idxs[:, 1:]   # Indices of neighbors (excluding self)
         self.neighbor_dists = dists[:, 1:]    # Distances to neighbors
 
@@ -361,7 +361,7 @@ class GACO_Large:
         THETA_H = 1/10; THETA_G = 1/3
         
         # Extract coordinates
-        x_coords = self.ttp.route[:,0]; y_coords = self.ttp.route[:,1]
+        x_coords = self.ttp.cities[:,0]; y_coords = self.ttp.cities[:,1]
         X_min, X_max = np.min(x_coords), np.max(x_coords)
         Y_min, Y_max = np.min(y_coords), np.max(y_coords)
         
@@ -378,7 +378,7 @@ class GACO_Large:
                 current_area = {'x_min': x, 'x_max': x+g, 'y_min': y, 'y_max': y+g }
                 count = 0
                 for item in type1_items:
-                    city_coords = self.ttp.route[item['city_id']]
+                    city_coords = self.ttp.cities[item['city_id']]
                     cx, cy = city_coords[0], city_coords[1]
                     # Check if item is inside the current grid box
                     if (current_area['x_min'] <= cx < current_area['x_max'] and 
@@ -428,7 +428,7 @@ class GACO_Large:
             area = area_data['area']
             items_to_select= []
             for item in unselected_type2: 
-                city_coords = self.ttp.route[item['city_id']]
+                city_coords = self.ttp.cities[item['city_id']]
                 cx, cy = city_coords[0], city_coords[1]
                 
                 is_in_area = (area['x_min'] <= cx < area['x_max'] and area['y_min'] <= cy < area['y_max'])
@@ -519,10 +519,10 @@ class GACO_Large:
                 sample_size = min(50, len(unvisited_indices))
                 candidates = np.random.choice(unvisited_indices, size=sample_size, replace=False)
                 
-                current_pos = self.ttp.route[current_city]
+                current_pos = self.ttp.cities[current_city]
                 
                 # Euclidean distance check on sample
-                dists = np.sum((self.ttp.route[candidates] - current_pos)**2, axis=1)
+                dists = np.sum((self.ttp.cities[candidates] - current_pos)**2, axis=1)
                 nearest_sample_idx = np.argmin(dists)
                 
                 next_city = candidates[nearest_sample_idx]
@@ -989,7 +989,7 @@ class Solution:
     def initialise(cls, items, cities, route, rr, max_weight, max_velocity, min_velocity, mutation_rate):
         cls.possible_items = []
         for city_id in route:
-            cls.city_positions.append(cities[city_id])
+            cls.city_positions.append(cities[int(city_id)])
             for item in items:
                 if item['city_id'] == city_id:
                     cls.possible_items.append(item)
@@ -1123,6 +1123,7 @@ class Solution:
         weight = 0
         total_time = 0
 
+        previous_city = None
         current_city = self.possible_items[0]['city_id']
         for i, item in enumerate(self.chromosome):
             city_pos = Solution.possible_items[i]['city_id']
@@ -1130,9 +1131,10 @@ class Solution:
                 weight += Solution.possible_items[i]['weight'] * item
             else:
                 velocity = calc_velocity(weight)
-                total_time += calc_distance(Solution.city_positions[i-1], Solution.city_positions[i]) / velocity
-                weight += Solution.possible_items[i]['weight'] * item
+                previous_city = current_city
                 current_city = city_pos
+                total_time += calc_distance(Solution.city_positions[current_city], Solution.city_positions[previous_city]) / velocity
+                weight += Solution.possible_items[i]['weight'] * item
 
         return total_time
 
@@ -1358,7 +1360,7 @@ def genetic_algorithm(max_weight, items, route, city_positions, rr, max_velocity
     """
 
     # Initialisation
-    Solution.initialise(items, route, city_positions, rr, max_weight, max_velocity, min_velocity, mutation_rate)
+    Solution.initialise(items, city_positions, route, rr, max_weight, max_velocity, min_velocity, mutation_rate)
 
     history = {"best": [], "mean": []}
 
@@ -1439,14 +1441,12 @@ if __name__ == "__main__":
             print(f"Loading Data: {FILENAME}...")
             cities, items, capacity, min_speed, max_speed, rr = load_ttp_file(FILENAME)
 
-            print(cities)
 
             # 1. Initialize TTP and ACO
             ttp = TTP_Large(cities, items, capacity, min_speed, max_speed, rr)
             # You can tune num_ants and max_iterations here
             gaco = GACO_Large(ttp, num_ants=30, k_neighbors=100) 
 
-            print(ttp.cities)
 
             # 2. Run ACO
             top_routes = gaco.run(max_iterations=50) 
@@ -1460,16 +1460,20 @@ if __name__ == "__main__":
             print(f"ACO COMPLETE. Optimizing Packing...")
             print("-" * 30)
 
-
+            best_solution = \
+            genetic_algorithm(ttp.capacity, ttp.items, best_route, ttp.cities, ttp.renting_ratio, ttp.max_speed,
+                              ttp.min_speed, population_size=200, population_repair=0.0, mutation_rate=0.05,
+                              tournament_size=0.2, elite_n=0.1, generations=200)[0][0]
+            print("GA best solution: ")
+            print(best_solution)
+            print("-" * 30)
 
             # 3. Run GISS (Genetic Algorithm)
             # Create the optimizer controller
             giss_opt = GISS_Optimiser(ttp, best_route)
             best_giss_solution = giss_opt.run(population_size=20, iterations=3000)
 
-            best_solution = genetic_algorithm(ttp.capacity, ttp.items, best_route, ttp.cities, ttp.renting_ratio, ttp.max_speed, ttp.min_speed, population_size=200, population_repair=1.0, mutation_rate=0.05, tournament_size=0.2, elite_n=0.1, generations=100)[0]
 
-            print(best_solution)
 
             # 4. Compare vs Empty Baseline
             baseline = GISS_Solution(giss_opt, initialise=False)
