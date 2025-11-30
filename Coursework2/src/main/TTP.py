@@ -1641,7 +1641,7 @@ class GISS_Solution:
 
     def mutate(self):
         """
-        Replaced static mutation with dynamic, asymmetric mutation that nytates bested off of the biases from the route.
+        Replaced static mutation with dynamic, asymmetric mutation that mytates bested off of the biases from the route.
         """
         n_items = len(self.chromosome)
         base_rate = 1.0 / n_items
@@ -1662,9 +1662,10 @@ class GISS_Solution:
         self.repair()
     
 FILENAMES = ['Coursework2/src/resources/a280-n279.txt', 'Coursework2/src/resources/a280-n1395.txt', 'Coursework2/src/resources/a280-n2790.txt', 'Coursework2/src/resources/fnl4461-n4460.txt','Coursework2/src/resources/fnl4461-n22300.txt','Coursework2/src/resources/fnl4461-n44600.txt','Coursework2/src/resources/pla33810-n33809.txt','Coursework2/src/resources/pla33810-n169045.txt','Coursework2/src/resources/pla33810-n338090.txt']
+ALT_FILENAMES = ['../resources/a280-n279.txt', '../resources/a280-n1395.txt', '../resources/a280-n2790.txt', '../resources/fnl4461-n4460.txt','../resources/fnl4461-n22300.txt','../resources/fnl4461-n44600.txt','../resources/pla33810-n33809.txt','../resources/pla33810-n169045.txt','../resources/pla33810-n338090.txt']
 
 if __name__ == "__main__":
-    for FILENAME in FILENAMES:
+    for FILENAME in ALT_FILENAMES:
         if os.path.exists(FILENAME):
             print(f"Loading Data: {FILENAME}...")
             cities, items, capacity, min_speed, max_speed, rr = load_ttp_file(FILENAME)
@@ -1689,7 +1690,7 @@ if __name__ == "__main__":
             # 3. Run GISS (Genetic Algorithm)
             # Create the optimizer controller
             giss_opt = GISS_Optimiser(ttp, best_route)
-            best_giss_solution = giss_opt.run(population_size=50, iterations=3000)
+            best_giss_solution = giss_opt.run(population_size=20, iterations=3000)
             
             # 4. Compare vs Empty Baseline
             baseline = GISS_Solution(giss_opt, initialise=False)
