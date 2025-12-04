@@ -2,15 +2,14 @@
 
 import os
 import random
-import itertools
 import math
-import csv
-import time
-import numpy as np
-import matplotlib.pyplot as plt
 
-fname = "src/resources/a280-n1395.txt"
-fitness_cache = {}
+import numpy as np
+import matplotlib.pyplot as plt 
+
+# File used for testing
+# Should be dynamic based on user input
+fname = "src/resources/a280-n1395.txt" 
 
 def open_file(fname):
     """Reads the knapsack problem data from a file"""
@@ -20,66 +19,33 @@ def open_file(fname):
         raise FileNotFoundError(f"Input file '{fname}' not found.")
 
     cities = []
-    bags = []
 
     # Read file contents
     with open(fname, "r") as file:
         lines = file.readlines()
         
     # Find the start and end indices for the city coordinates
-    coords_start_index = None
-    coords_end_index = None
+    start_index = None
+    end_index = None
     for i, line in enumerate(lines):
-        if "CAPACITY OF KNAPSACK" in line:
-            capacity = int(line.split(":", 1)[1].strip())
-        if "MIN SPEED" in line:
-            vmin = float(line.split(":", 1)[1].strip())
-        if "MAX SPEED" in line:
-            vmax = float(line.split(":", 1)[1].strip())
-        if "RENTING RATIO" in line:
-            rent = float(line.split(":", 1)[1].strip())
         if "NODE_COORD_SECTION" in line:
-            coords_start_index = i + 1
+            start_index = i + 1
         if "ITEMS SECTION" in line:
-            coords_end_index = i
+            end_index = i
             break
 
     # Parse city coordinates
-    if coords_start_index is not None and coords_end_index is not None:
-        for line in lines[coords_start_index:coords_end_index]:
+    if start_index is not None and end_index is not None:
+        for line in lines[start_index:end_index]:
             parts = line.split()
             city = int(parts[0]) - 1
             x = int(parts[1])
             y = int(parts[2])
             cities.append((city, x, y))
-    
-    items_start_index = coords_end_index + 1
-    items_end_index = len(lines)
-    
-    # Parse bag items
-    if items_start_index is not None and items_end_index is not None:
-        for line in lines[items_start_index:items_end_index]:
-            parts = line.split()
-            i = int(parts[0]) - 1
-            prof = int(parts[1])
-            weight = int(parts[2])
-            node = int(parts[3]) - 1
-            bags.append((i, prof, weight, node))
+
+    print(cities[0])
             
-    n = len(cities)
-    dist = [[0] * n for _ in range(n)]
-    for i in range(n):
-        xi, yi = cities[i][1], cities[i][2]
-        for j in range(n):
-            xj, yj = cities[j][1], cities[j][2]
-            d = math.hypot(xi - xj, yi - yj)
-            dist[i][j] = math.ceil(d)
-            
-    city_items = {c: [] for c in range(n)}
-    for idx, prof, weight, city in bags:
-        city_items[city].append(idx)
-            
-    return cities, dist, bags, capacity, vmax, vmin, rent, city_items
+    return cities
 
 def initialise(cities, population_size=10):
     """Initialises a population for the evolutionary algorithm"""
@@ -93,60 +59,51 @@ def initialise(cities, population_size=10):
         
     return chromosomes
 
-def fitness(chromosome, dist, bags, capacity, vmax, vmin, rent, city_items, velocity=None):
+def fitness(chromosome, cities, velocity=None):
     """Calculates the fitness of a chromosome based on total time taken to complete the tour"""
     
     """I believe that the ant colony optimisation for the knapsack problem should be implemented here
     Based on the chromosome given, get the best packing of items and the resulting velocity to use for time taken"""
-    key = tuple(chromosome)
-    if key in fitness_cache:
-        return fitness_cache[key]
+    
     total_time = 0
     # Add initial city to start and end
     chromosome = [0] + chromosome + [0]
     
-    distance = [dist[chromosome[i]][chromosome[i+1]] for i in range(len(chromosome) - 1)]
-    
-    bag_index = {city: city_items[city] for city in chromosome}
-
-    item, prof, weight, city = pbag_split(bags)
-
-    sol, val, wt, time = aco_knapsack(prof,
-        weight,
-        capacity,
-        distance,
-        chromosome,
-        bag_index,
-        vmax, vmin,
-        rent,
-        n_ants=10,
-        n_iterations=30)
-    
-    return time
-    
-    
-    
     # For testing purposes, assume constant velocity if none provided
-    # if velocity is None:
-    #     # constant velocity of 1
-    #     return sum(dist[chromosome[i]][chromosome[i+1]] for i in range(len(chromosome) - 1))
-    # else:
-    #     total_time = 0
-    #     for i in range(len(chromosome) - 1):
-    #         total_time += dist[chromosome[i]][chromosome[i+1]] / velocity[i]
-    #     return total_time
+    if velocity is None:
+        velocity = [1] * (len(chromosome) - 1)
+        
+    # Calculate total time taken for the tour
+    for i in range(len(chromosome) - 1):
+        # Euclidean distance between cities
+        city1 = cities[chromosome[i]]
+        city2 = cities[chromosome[i + 1]]
+        dist = ((city1[1] - city2[1]) ** 2 + (city1[2] - city2[2]) ** 2) ** 0.5
+        dist = math.ceil(dist)
+        time = dist / velocity[i]
+        total_time += time
+    return total_time
 
-def selection(t_size, chromosomes, fitness_values):
+def selection(t_size, chromosomes, cities):
     """Selects two parents from the population using tournament selection"""
-    def tournament(t_size, chromosomes, fitness_values):
+    def tournament(t_size, chromosomes, cities):
         """Tournament selection helper function"""
-        indices = [random.randint(0, len(chromosomes) - 1) for _ in range(t_size)]
-        best_idx = min(indices, key=lambda i: fitness_values[i])
-        return chromosomes[best_idx]
+        indices = []
+        for _ in range(t_size):
+            indices.append(random.randint(0, len(chromosomes) - 1))
+        # Select the chromosome with the best fitness (lowest time)
+        parent = min(indices, key=lambda chromosome: fitness(chromosomes[chromosome], cities))
+        return parent
     
-    parent1 = tournament(t_size, chromosomes, fitness_values)
-    parent2 = tournament(t_size, chromosomes, fitness_values)
-    return [parent1, parent2]
+    parents = []
+    # This ensures that the same parent is not selected twice
+    chromosomes_selection = chromosomes
+    for _ in range(2):
+        parent = tournament(t_size, chromosomes_selection, cities)
+        parents.append(chromosomes_selection[parent])
+        chromosomes_selection = chromosomes_selection[:parent] + chromosomes_selection[parent + 1:]
+        
+    return parents
 
 def crossover(parents):
     """Performs order crossover on two parents to produce two children"""
@@ -169,7 +126,7 @@ def crossover(parents):
     child2 = create_child(subseq2, parents[0])
     return child1, child2
 
-def mutation(chromosome, mutation_rate=0.005):
+def mutation(chromosome, mutation_rate=0.1):
     """Performs swap mutation on a chromosome"""
     # Go through each gene in the chromosome
     for i in range(len(chromosome)):
@@ -179,45 +136,74 @@ def mutation(chromosome, mutation_rate=0.005):
             chromosome[i], chromosome[j] = chromosome[j], chromosome[i]
     return chromosome
 
-def replacement(chromosomes, children, dist, bags, capacity, vmax, vmin, rent, city_items, fitness_values):
+def replacement(chromosomes, children, cities):
     """Replaces the worst chromosomes in the population with new children if they are better"""
     for child in children:
-        child_fitness = fitness(child, dist, bags, capacity, vmax, vmin, rent, city_items)
         # Find the chromosome with the worst fitness (longest distance)
-        longest_dist = max(range(len(chromosomes)), key=lambda i: fitness_values[i])
-        if child_fitness < fitness_values[longest_dist]:
+        longest_dist = max(range(len(chromosomes)), key=lambda i: fitness(chromosomes[i], cities))
+        if fitness(child, cities) < fitness(chromosomes[longest_dist], cities):
             chromosomes[longest_dist] = child
-            fitness_values[longest_dist] = child_fitness
-    return chromosomes, fitness_values
+    return chromosomes
 
-def evolutionary_algorithm(fname, population_size=10, t_size=5, mutation_rate=0.005):
+def evolutionary_algorithm(fname):
     """Main function to run the evolutionary algorithm"""
-    cities, dist, bags, capacity, vmax, vmin, rent, city_items = open_file(fname)
-    chromosomes = initialise(cities, population_size)
-    fitness_values = [fitness(chromosome, dist, bags, capacity, vmax, vmin, rent, city_items) for chromosome in chromosomes]
+    cities = open_file(fname)
+    chromosomes = initialise(cities)
+    parents = selection(3, chromosomes, cities)
+    child1, child2 = crossover(parents)
 
     # Run the evolutionary algorithm for a set number of generations
     # Number of generations can be adjusted as needed
     for i in range(10000):
-        parents = selection(t_size, chromosomes, fitness_values)
+        parents = selection(3, chromosomes, cities)
         child1, child2 = crossover(parents)
-        mutated_child1 = mutation(child1, mutation_rate)
-        mutated_child2 = mutation(child2, mutation_rate)
-        # replacement returns updated (chromosomes, fitness_values) so unpack both
-        chromosomes, fitness_values = replacement(chromosomes, [mutated_child1, mutated_child2], dist, bags, capacity, vmax, vmin, rent, city_items, fitness_values)
+        mutated_child1 = mutation(child1)
+        mutated_child2 = mutation(child2)
+        chromosomes = replacement(chromosomes, [mutated_child1, mutated_child2], cities)
 
-    best_idx = min(range(len(chromosomes)), key=lambda i: fitness_values[i])
-    best_chromosome = chromosomes[best_idx]
-    best_value = fitness_values[best_idx]
+    best_chromosome = max(chromosomes, key=lambda chromosome: fitness(chromosome, cities))
+    best_value = fitness(best_chromosome, cities)
 
     print(f"Best chromosome: {best_chromosome}")
     print(f"Best value: {best_value}")
-    return best_value, best_chromosome, dist
+    return best_chromosome
 
-########################################################
-########################################################
-########################################################
-########################################################
+# def open_file_bags(fname):
+
+#     bags = []
+#     with open(fname, "r") as file:
+#         lines = file.readlines()
+        
+#     # Find the start and end indices for the city coordinates
+#     start_index = None
+#     end_index = length(lines)
+#     for i, line in enumerate(lines):
+#         if "NODE_COORD_SECTION" in line:
+#             start_index = i + 1
+#         if "ITEMS SECTION" in line:
+#             end_index = i
+#             break
+
+#     # Parse city coordinates
+#     if start_index is not None and end_index is not None:
+#         for line in lines[start_index:end_index]:
+#             parts = line.split()
+#             city = int(parts[0]) - 1
+#             x = int(parts[1])
+#             y = int(parts[2])
+#             bags.append((city, x, y))
+            
+#     return cities   
+
+
+##########################################################################################################################################################
+##########################################################################################################################################################
+##########################################################################################################################################################
+##########################################################################################################################################################    
+
+
+
+
 
 def open_file_bags(fname):
     """
@@ -553,118 +539,62 @@ def aco_knapsack(
         pheromone = evaporate_pheromone(pheromone, rho)
         pheromone = deposit_pheromone(pheromone, ant_solutions, capacity, q, best_value, best_time)
     
-    # results = compute_pareto_front_time_value(results)
-    # #results = sorted(results, key=lambda x: x[0]) 
+    results = compute_pareto_front_time_value(results)
+    #results = sorted(results, key=lambda x: x[0]) 
 
-    # with open("Evo_Ant_hybrid-a280-n1395.txt", "w") as f:
-    #     for a, b in results:
+    with open("Evo_Ant_hybrid-a280-n1395.txt", "w") as f:
+        for a, b in results:
 
-    #         f.write(f"{a} {b}\n")
-    #     f.close
+            f.write(f"{a} {b}\n")
+        f.close
     
-    # times_plot = [t for t, v in results]
-    # values_plot = [v for t, v in results]
+    times_plot = [t for t, v in results]
+    values_plot = [v for t, v in results]
 
-    # plt.figure(figsize=(8, 5))
-    # plt.plot(times_plot, values_plot, marker='o')
-    # plt.xlabel("Time")
-    # plt.ylabel("Solution Value")
-    # plt.title("Plot of Time vs Value")
-    # plt.grid(True)
-
+    plt.figure(figsize=(8, 5))
+    plt.plot(times_plot, values_plot, marker='o')
+    plt.xlabel("Time")
+    plt.ylabel("Solution Value")
+    plt.title("Plot of Time vs Value")
+    plt.grid(True)
+    plt.show()    
 
     # return Python types for convenience
-    return best_solution.tolist(), best_value, best_weight, best_time
-
-
-
-value, route, distance = evolutionary_algorithm(fname)
-plt.show()
-
-# cities = open_file2(fname)
-
-# bags, capacity, vmax, vmin, rent  = open_file_bags(fname)
-
-# bag_index = find_bags(route, bags)
-
-# item, prof, weight, city = pbag_split(bags)
+    return best_solution.tolist(), best_value, best_weight
 
 
 
 
-# sol, val, wt = aco_knapsack(prof,
-#     weight,
-#     capacity,
-#     distance,
-#     route,
-#     bag_index,
-#     vmax, vmin,
-#     rent,)
 
-# print("Capacity:", capacity)
-# print("Best solution:", sol)
-# print("Total value:", val)  
-# print("Total weight:", wt)
-# print("sol length:", len(sol))
 
-    
-# fnames= ["src/resources/fnl4461-n4460.txt", "src/resources/pla33810-n33809.txt"]
-# population_sizes = [20, 50, 100]
-# tournament_sizes = [5, 10, 15]
-# mutation_rates = [0.001, 0.005, 0.01]
-# optimal_parameters = []
+route = evolutionary_algorithm(fname)
 
-# # Collect all results for later analysis
-# all_test_results = []
+cities = open_file2(fname)
 
-# for fname in fnames:
-#     best_params = None
-#     test_results = []
-#     start_file = time.time()
-#     for pop_size, t_size, mut_rate in itertools.product(population_sizes, tournament_sizes, mutation_rates):
-#         print(f"Testing with population size: {pop_size}, tournament size: {t_size}, mutation rate: {mut_rate} for file {fname}")
-#         best_value, best_chromosome = evolutionary_algorithm(fname, population_size=pop_size, t_size=t_size, mutation_rate=mut_rate)
-#         record = {
-#             "file": fname,
-#             "population_size": pop_size,
-#             "tournament_size": t_size,
-#             "mutation_rate": mut_rate,
-#             "best_value": best_value,
-#             "best_chromosome": str(best_chromosome)
-#         }
-#         test_results.append(record)
-#         all_test_results.append(record)
+distance = distances(cities, route)
 
-#         if best_params is None or best_value < best_params[0]:
-#             best_params = (best_value, pop_size, t_size, mut_rate)
-#     elapsed = time.time() - start_file
-#     optimal_parameters.append((fname, best_params))
-#     # Write per-file CSV with all parameter combinations and results
-#     out_name = f"results_{os.path.basename(fname)}.csv"
-#     try:
-#         with open(out_name, "w", newline="", encoding="utf-8") as csvfile:
-#             fieldnames = ["file", "population_size", "tournament_size", "mutation_rate", "best_value", "best_chromosome"]
-#             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-#             writer.writeheader()
-#             for r in test_results:
-#                 writer.writerow(r)
-#         print(f"Finished tests for {fname} in {elapsed:.1f}s — wrote {out_name}")
-#     except Exception as e:
-#         print(f"Failed to write results for {fname}: {e}")
+bags, capacity, vmax, vmin, rent  = open_file_bags(fname)
 
-# for params in optimal_parameters:
-#     print(f"Optimal parameters for {params[0]}: Population Size = {params[1][1]}, Tournament Size = {params[1][2]}, Mutation Rate = {params[1][3]} with Best Value = {params[1][0]}")
+bag_index = find_bags(route, bags)
 
-# # Write aggregated CSV for all files
-# agg_name = "all_results.csv"
-# try:
-#     with open(agg_name, "w", newline="", encoding="utf-8") as csvfile:
-#         fieldnames = ["file", "population_size", "tournament_size", "mutation_rate", "best_value", "best_chromosome"]
-#         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-#         writer.writeheader()
-#         for r in all_test_results:
-#             writer.writerow(r)
-#     print(f"Wrote aggregated results to {agg_name}")
-# except Exception as e:
-#     print(f"Failed to write aggregated results: {e}")
+item, prof, weight, city = pbag_split(bags)
+
+
+
+
+sol, val, wt = aco_knapsack(prof,
+    weight,
+    capacity,
+    distance,
+    route,
+    bag_index,
+    vmax, vmin,
+    rent,)
+
+print("Capacity:", capacity)
+print("Best solution:", sol)
+print("Total value:", val)  
+print("Total weight:", wt)
+print("sol length:", len(sol))
+
 
