@@ -108,7 +108,7 @@ class TTP_Large:
 class GACO_Large: 
     def __init__(self, ttp, num_ants=50, alpha=1.0, beta=8.0, rho=0.1, Q=0.3, k_neighbors=100): 
         """
-        Initializes the Ant Colony Optimization for Large instances.
+        Initializes the Ant Colony Optimisation for Large instances.
         Uses Candidate Lists (K-Nearest Neighbors) to avoid O(N^2) memory usage.
         """
         self.ttp = ttp
@@ -124,7 +124,7 @@ class GACO_Large:
         self.max_tau = 6.0
 
         print(f"Building KD-Tree for {self.ttp.num_cities} cities...")
-        # OPTIMIZATION: KD-Tree allows for fast spatial queries
+        # KD-Tree allows for fast spatial queries
         self.tree = KDTree(self.ttp.cities)
 
         # Pre-calculate only the K-Nearest Neighbors for every city.
@@ -306,9 +306,7 @@ class GACO_Large:
             else: 
                 unvisited_indices = np.where(~visited)[0]
                 
-                # OPTIMIZATION: Instead of calculating distance to ALL unvisited nodes (slow),
                 # sample 50 random unvisited nodes and pick the closest one.
-                # This prevents "teleporting" across the map while keeping speed high.
                 sample_size = min(50, len(unvisited_indices))
                 candidates = np.random.choice(unvisited_indices, size=sample_size, replace=False)
                 
@@ -372,7 +370,7 @@ class GACO_Large:
     
     def fast_two_opt(self, route, max_passes=1):
         """
-        Optimized 2-opt Local Search.
+        Optimised 2-opt Local Search.
         Only considers swaps if the new node is within the top 20 neighbors.
         O(N * 20) complexity instead of O(N^2).
         """
@@ -537,9 +535,9 @@ class GACO_Large:
             print(f"finished iteration {iteration}, best distance {best_global_distance}")
 
         # 5. Final Polish: Run expensive Full 2-Opt on the final result
-        print("Running Full 2-OPT optimization...")
+        print("Running Full 2-OPT optimisation...")
         final_route, final_dist = self.full_two_opt(best_global_route)
-        print(f"Final Optimization: {best_global_distance} -> {final_dist}")
+        print(f"Final Optimisation: {best_global_distance} -> {final_dist}")
         return [(final_route, final_dist)]
     
 
@@ -908,6 +906,9 @@ class MOPSO_Optimiser:
         return self.archive[leader_idx]
 
     def run(self, swarm_size=100, iterations=100, w=0.5, c1=1.5, c2=1.5):
+        #w is the inerta weight 
+        #c1 is the cognative (inidividual) coefficent 
+        #c2 is the social coefficent 
         print("Initializing Swarm with Multi-Strategy Heuristics...")
         swarm = self.initialize_swarm_strategies(swarm_size)
         
@@ -974,12 +975,11 @@ if __name__ == "__main__":
             
             cities, items, capacity, min_speed, max_speed, rr = load_ttp_file(FILENAME)
 
-            # 2. Run Optimization
+            # 2. Run Optimisation
             # Initialize TTP
             ttp = TTP_Large(cities, items, capacity, min_speed, max_speed, rr)
             
-            # Load Route (Assuming you have generated them)
-            # If you need to re-run ACO, uncomment your ACO lines
+            # Load route
             try:
                 best_route = np.loadtxt(f"full_route{base_name}.txt", dtype=int, delimiter=",")
                 print(f"Route loaded! Length: {len(best_route)}")
@@ -988,7 +988,7 @@ if __name__ == "__main__":
                 continue
 
             print("-" * 30)
-            print(f"Optimizing Packing (MOPSO) for {base_name}...")
+            print(f"Optimising Packing (MOPSO) for {base_name}...")
             
             mopso = MOPSO_Optimiser(ttp, best_route)
             # Run MOPSO
@@ -1013,9 +1013,7 @@ if __name__ == "__main__":
             # Store for final plotting
             all_results[base_name] = {'times': times, 'profits': profits}
 
-    # ==========================================
-    # FINAL CONSOLIDATED PLOTTING (Negative Profit vs Time)
-    # ==========================================
+    # plot profit agaisnt time 
     if all_results:
         print("Generating Final Comparison Plot...")
         
@@ -1024,7 +1022,7 @@ if __name__ == "__main__":
         rows = math.ceil(num_plots / cols)
         
         fig, axes = plt.subplots(rows, cols, figsize=(18, 12))
-        fig.suptitle('Optimization Results: Negative Profit vs Time', fontsize=16)
+        fig.suptitle('Optimisation Results: Negative Profit vs Time', fontsize=16)
         
         # Handle case of single plot (axes is not an array)
         if num_plots == 1:
