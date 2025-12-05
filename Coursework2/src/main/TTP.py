@@ -905,12 +905,14 @@ class MOPSO_Optimiser:
         leader_idx = np.random.choice(len(self.archive), p=probs)
         return self.archive[leader_idx]
 
-    def run(self, swarm_size=100, iterations=100, w=0.5, c1=1.5, c2=1.5):
+    def run(self, swarm_size=100, iterations=100, w=0.5, c1=1.5, c2=1.5, value=0):
         #w is the inerta weight 
         #c1 is the cognative (inidividual) coefficent 
         #c2 is the social coefficent 
         print("Initializing Swarm with Multi-Strategy Heuristics...")
         swarm = self.initialize_swarm_strategies(swarm_size)
+
+        c2 = value
         
         for it in range(iterations):
             for p in swarm:
@@ -950,7 +952,8 @@ class MOPSO_Optimiser:
                 
         return self.archive
 
-FILENAMES = ['Coursework2/src/resources/a280-n279.txt', 'Coursework2/src/resources/a280-n1395.txt', 'Coursework2/src/resources/a280-n2790.txt', 'Coursework2/src/resources/fnl4461-n4460.txt','Coursework2/src/resources/fnl4461-n22300.txt','Coursework2/src/resources/fnl4461-n44600.txt','Coursework2/src/resources/pla33810-n33809.txt','Coursework2/src/resources/pla33810-n169045.txt','Coursework2/src/resources/pla33810-n338090.txt']
+# FILENAMES = ['Coursework2/src/resources/fnl4461-n22300.txt']
+FILENAMES = ['../resources/fnl4461-n22300.txt']
 ref_points = {
     'a280-n279.txt':      {'min_time': 2613.0,       'max_time': 5444.0,        'min_profit': -42036.0,      'max_profit': -0.0},
     'a280-n1395.txt':     {'min_time': 2613.0,       'max_time': 6573.0,        'min_profit': -489194.0,     'max_profit': -0.0},
@@ -966,7 +969,10 @@ ref_points = {
 if __name__ == "__main__":
     all_results = {}
 
-    for FILENAME in FILENAMES:
+    sizes = [0.5, 0.7, 1.0, 1.5, 2]
+
+    for value in sizes:
+        FILENAME = "../resources/fnl4461-n22300.txt"
         if os.path.exists(FILENAME):
             print(f"Loading Data: {FILENAME}...")
             base_name = os.path.basename(FILENAME)
@@ -981,7 +987,7 @@ if __name__ == "__main__":
             
             # Load route
             try:
-                best_route = np.loadtxt(f"full_route{base_name}.txt", dtype=int, delimiter=",")
+                best_route = np.loadtxt(f"../../../full_route{base_name}.txt", dtype=int, delimiter=",")
                 print(f"Route loaded! Length: {len(best_route)}")
             except OSError:
                 print(f"Route file full_route{base_name}.txt not found. Skipping...")
@@ -992,7 +998,7 @@ if __name__ == "__main__":
             
             mopso = MOPSO_Optimiser(ttp, best_route)
             # Run MOPSO
-            archive = mopso.run(swarm_size=100, iterations=100)
+            archive = mopso.run(swarm_size=100, iterations=100, value=value)
             
             # 3. Extract Results
             # archive contains tuples: (time, profit, position)
@@ -1003,7 +1009,7 @@ if __name__ == "__main__":
             profits = [sol[1] for sol in archive]
 
             # 4. Save to .f File (Format: Time Profit)
-            output_f_file = f"{name_only}.f"
+            output_f_file = f"{name_only}-param.f"
             print(f"Saving results to {output_f_file}...")
             with open(output_f_file, "w") as f:
                 for t, p in zip(times, profits):
@@ -1011,10 +1017,12 @@ if __name__ == "__main__":
                     f.write(f"{t:.6f} {int(p)}\n")
 
             # Store for final plotting
-            all_results[base_name] = {'times': times, 'profits': profits}
+            all_results[base_name+str(value)] = {'times': times, 'profits': profits}
 
     # plot profit agaisnt time 
     if all_results:
+
+        print(all_results)
         print("Generating Final Comparison Plot...")
         
         num_plots = len(all_results)
