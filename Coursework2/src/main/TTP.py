@@ -540,10 +540,6 @@ class GACO_Large:
         print(f"Final Optimisation: {best_global_distance} -> {final_dist}")
         return [(final_route, final_dist)]
     
-
-import numpy as np
-import random
-import math
 from scipy.spatial.distance import cdist # Required for select_leader
 
 class MOPSO_Particle:
@@ -600,12 +596,9 @@ class MOPSO_Particle:
                 packing_plan[idx] = 0        
                 self.position[idx] = 0.0  # Sync position so PSO learns
                 current_weight -= self.optimiser.weights[idx]
-        
-        # 4. NO FILL LOGIC
-        # Leaving the bag empty is a valid strategy for speed.
-        # Do not force items in.
+    
 
-        # 5. Calculate Objectives
+        # Calculate Objectives
         self.current_profit = np.sum(packing_plan * self.optimiser.values)
         self.current_time = self.optimiser.calculate_time(packing_plan, current_weight)
 
@@ -636,22 +629,20 @@ class MOPSO_Particle:
 
     def mutate(self, mutation_rate=None):
         """
-        Randomly flips bits to maintain genetic diversity in the swarm.
+        Randomly flips bits. 
+        1/N mutation (flip 1 bit on average).
         """
         mutation_rate = 1 / self.capacity_limit
         mask = np.random.rand(self.dim) < mutation_rate
         self.position[mask] = 1.0 - self.position[mask]
 
     def reset_position_with_bias(self, bias_array):
-        """
-        Used during initialization to seed the particle with a 'smart' starting point
-        based on heuristics, rather than pure random noise.
-        """
         self.dim = len(bias_array)
-        # Add slight noise to the bias so not every particle is identical
+        
+        # Position initialization (Standard)
         noise = (np.random.rand(self.dim) * 0.2) - 0.1 
         self.position = np.clip(bias_array + noise, 0, 1)
-        self.velocity = np.zeros(self.dim)
+        self.velocity = (self.position - 0.5) * 2.0  # Maps [0,1] to [-1,1]
         
         self.evaluate()
         self.pbest_position = self.position.copy()
