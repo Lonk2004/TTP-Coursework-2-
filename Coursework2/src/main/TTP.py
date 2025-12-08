@@ -574,44 +574,39 @@ class MOPSO_Particle:
         self.current_profit = 0
 
     def evaluate(self):
-        """
-        Converts continuous position to binary plan, enforces constraints, 
-        and calculates Time/Profit.
-        """
-        # Thresholding: > 0.5 means "Attempt to pick item"
+        #Convert Position to Plan
         packing_plan = (self.position > 0.5).astype(int)
+        
+        effective_limit = self.capacity_limit 
+
         current_weight = np.sum(packing_plan * self.optimiser.weights)
         
-        # 2. HEURISTIC REPAIR MECHANISM
-        # If the particle picked too much (over its virtual or physical limit),
-        # we must drop items. We don't drop randomly; we drop the "worst" items.
-        if current_weight > self.capacity_limit:
-            # Find indices of items currently picked
+        # Only intervene if we broke the rules (Overweight).
+        if current_weight > effective_limit:
             selected_indices = np.where(packing_plan == 1)[0]
             
-            # Calculate Efficiency Score:
-            # Base Ratio = Value / Weight
-            # Distance Factor = Cost of carrying it (High at start of tour, Low at end)
-            # Efficiency = Base Ratio / Distance Factor
+            # Physics Calculation: Value per Weight per Distance Cost
+            # This is the "Domain Knowledge" that made the original code work.
             base_ratios = self.optimiser.values[selected_indices] / (self.optimiser.weights[selected_indices] + 1e-9)
             dist_factors = self.optimiser.item_distance_costs[selected_indices]
             efficiencies = base_ratios / (dist_factors + 1e-9)
             
-            # Sort items by efficiency (ascending). We want to drop low efficiency first.
+            # Sort Ascending (Drop the least efficient items first)
             sorted_args = np.argsort(efficiencies)
             sorted_indices = selected_indices[sorted_args]
             
-            # Drop items until we fit inside the limit
             for idx in sorted_indices:
-                if current_weight <= self.capacity_limit: 
-                    break
-                packing_plan[idx] = 0        # Remove from plan
-                self.position[idx] = 0.0     # Update continuous position to reflect drop
+                if current_weight <= effective_limit: break
+                packing_plan[idx] = 0        
+                self.position[idx] = 0.0  # Sync position so PSO learns
                 current_weight -= self.optimiser.weights[idx]
         
-        # 3. Calculate Objectives
+        # 4. NO FILL LOGIC
+        # Leaving the bag empty is a valid strategy for speed.
+        # Do not force items in.
+
+        # 5. Calculate Objectives
         self.current_profit = np.sum(packing_plan * self.optimiser.values)
-        # Use the Optimiser's physics engine to calculate time
         self.current_time = self.optimiser.calculate_time(packing_plan, current_weight)
 
     def update_pbest(self):
@@ -639,10 +634,11 @@ class MOPSO_Particle:
             self.pbest_time = self.current_time
             self.pbest_profit = self.current_profit
 
-    def mutate(self, mutation_rate=0.01):
+    def mutate(self, mutation_rate=None):
         """
         Randomly flips bits to maintain genetic diversity in the swarm.
         """
+        mutation_rate = 1 / self.capacity_limit
         mask = np.random.rand(self.dim) < mutation_rate
         self.position[mask] = 1.0 - self.position[mask]
 
@@ -906,45 +902,65 @@ class MOPSO_Optimiser:
         return self.archive[leader_idx]
 
     def run(self, swarm_size=100, iterations=100, w=0.5, c1=1.5, c2=1.5):
-        #w is the inerta weight 
-        #c1 is the cognative (inidividual) coefficent 
-        #c2 is the social coefficent 
         print("Initializing Swarm with Multi-Strategy Heuristics...")
         swarm = self.initialize_swarm_strategies(swarm_size)
         
+        # Initialize Stagnation Variables
+        stagnation_counter = 0
+        last_archive_size = 0
+        
         for it in range(iterations):
+            # 1. Update Every Particle
             for p in swarm:
                 leader = self.select_leader()
                 if leader is None: continue
                 leader_pos = leader[2]
                 
-                # --- BINARY PSO UPDATE ---
-                
-                # 1. Update Velocity (Standard PSO formula)
+                # Update Velocity
                 r1 = np.random.rand(p.dim)
                 r2 = np.random.rand(p.dim)
-                
                 p.velocity = (w * p.velocity) + \
                             (c1 * r1 * (p.pbest_position - p.position)) + \
                             (c2 * r2 * (leader_pos - p.position))
                 
-                # Clamp velocity so not too extrenuous. 
+                # Clamp velocity
                 p.velocity = np.clip(p.velocity, -6.0, 6.0)
 
-                # 2. Sigmoid Transfer (Velocity -> Probability)
-                # S(v) = 1 / (1 + e^-v) gives probability that bit should be 1 as knapsack is binary classification
+                # Update Position
                 prob_is_one = 1 / (1 + np.exp(-p.velocity))
-
-                # 3. Stochastic Decision
                 rand_vals = np.random.rand(p.dim)
                 p.position = (rand_vals < prob_is_one).astype(float)
                 
-                # Evaluation and Archiving
+                # Evaluate & Archive
                 p.evaluate() 
                 p.update_pbest()
                 self.update_archive(p)
                 p.mutate() 
+
+            # Turbulence
+            # Check if we are stuck (archive hasn't grown)
+            if len(self.archive) == last_archive_size:
+                stagnation_counter += 1
+            else:
+                stagnation_counter = 0
+                last_archive_size = len(self.archive)
+
+            # If stuck for 5 loops, shake things up
+            if stagnation_counter > 5:
+                num_to_reset = int(swarm_size * 0.2) # Reset 20%
+                # print(f"  >> Stagnation detected! Resetting {num_to_reset} particles.")
                 
+                indices = np.random.choice(swarm_size, num_to_reset, replace=False)
+                for idx in indices:
+                    # Complete reset of these particles to find new strategies
+                    swarm[idx].position = np.random.rand(swarm[idx].dim)
+                    swarm[idx].velocity = np.zeros(swarm[idx].dim)
+                    swarm[idx].pbest_time = float('inf') 
+                    swarm[idx].pbest_profit = -float('inf')
+                
+                stagnation_counter = 0 # Reset counter
+            # -------------------------------------------------
+
             if it % 10 == 0:
                 print(f"Iter {it}: Archive Size {len(self.archive)}")
                 
