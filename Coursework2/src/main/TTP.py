@@ -551,44 +551,45 @@ class MOPSO_Particle:
     Represents a single solution in the swarm (a specific set of items picked).
     """
     # 1. Accept a specific capacity fraction (0.0 to 1.0)
-    def __init__(self, optimiser, capacity_fraction=1.0):
+    def     __init__(self, optimiser, capacity_fraction=1.0):
         self.optimiser = optimiser
         self.dim = len(optimiser.items)
-        
+
         # VIRTUAL LIMIT:
         # Instead of every particle trying to fill the knapsack to 100%,
-        # this particle artificially limits itself (e.g., to 50%). 
+        # this particle artificially limits itself (e.g., to 50%).
         # This creates "Sprinter" particles naturally.
         self.capacity_limit = optimiser.capacity * capacity_fraction
-        
+
         # Position is continuous (0.0 to 1.0), converted to binary later
         self.position = np.random.rand(self.dim)
-        self.velocity = np.zeros(self.dim)
-        
+        # self.velocity = np.zeros(self.dim)
+        self.velocity = np.random.uniform(-2, 2, self.dim)
+
         # Personal Best memory
         self.pbest_position = self.position.copy()
         self.pbest_time = float('inf')   # Minimize Time
         self.pbest_profit = -float('inf') # Maximize Profit
-        
+
         self.current_time = 0
         self.current_profit = 0
 
     def evaluate(self):
         """
-        Converts continuous position to binary plan, enforces constraints, 
+        Converts continuous position to binary plan, enforces constraints,
         and calculates Time/Profit.
         """
         # Thresholding: > 0.5 means "Attempt to pick item"
         packing_plan = (self.position > 0.5).astype(int)
         current_weight = np.sum(packing_plan * self.optimiser.weights)
-        
+
         # 2. HEURISTIC REPAIR MECHANISM
         # If the particle picked too much (over its virtual or physical limit),
         # we must drop items. We don't drop randomly; we drop the "worst" items.
         if current_weight > self.capacity_limit:
             # Find indices of items currently picked
             selected_indices = np.where(packing_plan == 1)[0]
-            
+
             # Calculate Efficiency Score:
             # Base Ratio = Value / Weight
             # Distance Factor = Cost of carrying it (High at start of tour, Low at end)
@@ -596,19 +597,22 @@ class MOPSO_Particle:
             base_ratios = self.optimiser.values[selected_indices] / (self.optimiser.weights[selected_indices] + 1e-9)
             dist_factors = self.optimiser.item_distance_costs[selected_indices]
             efficiencies = base_ratios / (dist_factors + 1e-9)
-            
+
             # Sort items by efficiency (ascending). We want to drop low efficiency first.
             sorted_args = np.argsort(efficiencies)
+            drop_order = sorted_args.copy()
+            np.random.shuffle(drop_order[:5])  # randomize among lowest 5
             sorted_indices = selected_indices[sorted_args]
-            
+
             # Drop items until we fit inside the limit
             for idx in sorted_indices:
-                if current_weight <= self.capacity_limit: 
+                if current_weight <= self.capacity_limit:
                     break
                 packing_plan[idx] = 0        # Remove from plan
-                self.position[idx] = 0.0     # Update continuous position to reflect drop
+                # self.position[idx] = 0.0     # Update continuous position to reflect drop
+                self.position[idx] = np.random.uniform(0, 0.3)
                 current_weight -= self.optimiser.weights[idx]
-        
+
         # 3. Calculate Objectives
         self.current_profit = np.sum(packing_plan * self.optimiser.values)
         # Use the Optimiser's physics engine to calculate time
@@ -621,7 +625,7 @@ class MOPSO_Particle:
         # Check if current solution is strictly WORSE than pbest
         is_dominated = (self.current_time >= self.pbest_time) and \
                        (self.current_profit <= self.pbest_profit)
-        
+
         # Check if current solution is strictly BETTER than pbest
         dominates_old = (self.current_time <= self.pbest_time) and \
                         (self.current_profit >= self.pbest_profit) and \
@@ -639,12 +643,15 @@ class MOPSO_Particle:
             self.pbest_time = self.current_time
             self.pbest_profit = self.current_profit
 
-    def mutate(self, mutation_rate=0.01):
+    def mutate(self, mutation_rate=0.02):
         """
         Randomly flips bits to maintain genetic diversity in the swarm.
         """
         mask = np.random.rand(self.dim) < mutation_rate
-        self.position[mask] = 1.0 - self.position[mask]
+        # self.position[mask] = 1.0 - self.position[mask]
+
+        self.position[mask] += np.random.uniform(-0.4, +0.4, size=np.sum(mask))
+        self.position = np.clip(self.position, 0, 1)
 
     def reset_position_with_bias(self, bias_array):
         """
@@ -653,10 +660,11 @@ class MOPSO_Particle:
         """
         self.dim = len(bias_array)
         # Add slight noise to the bias so not every particle is identical
-        noise = (np.random.rand(self.dim) * 0.2) - 0.1 
+        # noise = (np.random.rand(self.dim) * 0.2) - 0.1
+        noise = np.random.randn(self.dim) * 0.3
         self.position = np.clip(bias_array + noise, 0, 1)
         self.velocity = np.zeros(self.dim)
-        
+
         self.evaluate()
         self.pbest_position = self.position.copy()
         self.pbest_time = self.current_time
@@ -664,7 +672,7 @@ class MOPSO_Particle:
 
 class MOPSO_Optimiser:
     """
-    The Swarm Manager. Handles initialization, physics calculations, 
+    The Swarm Manager. Handles initialization, physics calculations,
     and the global archive (Pareto Front).
     """
     def __init__(self, ttp, route):
@@ -672,35 +680,35 @@ class MOPSO_Optimiser:
         self.route = route
         self.capacity = ttp.capacity
         self.items = ttp.items
-        
+
         # 1. Standard Vectors for fast numpy math
         self.weights = np.array([i['weight'] for i in ttp.items])
         self.values = np.array([i['value'] for i in ttp.items])
-        
+
         # 2. Pre-calculate Route Distances (Essential for speed in calculate_time)
         self.route_distances = []
         for k in range(len(route) - 1):
             self.route_distances.append(ttp.get_dist(route[k], route[k+1]))
-            
+
         # 3. Map Items to Cities for fast lookup
         self.items_map = {cid: [] for cid in range(ttp.num_cities)}
         for idx, item in enumerate(ttp.items):
             self.items_map[item['city_id']].append((idx, item['weight']))
 
         # 4. LOCATION-AWARE COST CALCULATION
-        # This creates a static penalty array. 
+        # This creates a static penalty array.
         # An item picked up at the 1st city incurs a high cost (carried for whole tour).
         # An item picked up at the last city incurs low cost.
         city_route_index = {city_id: idx for idx, city_id in enumerate(route)}
         total_cities = len(route)
-        
+
         self.item_distance_costs = np.zeros(len(self.items))
-        
+
         for i, item in enumerate(self.items):
             city_id = item['city_id']
             idx_in_route = city_route_index.get(city_id, 0)
             progress = idx_in_route / total_cities
-            
+
             # Heuristic Adjustment:
             if self.ttp.num_cities < 1000:
                 # Small Map: Distance doesn't impact speed enough to worry about "heaviness".
@@ -709,9 +717,9 @@ class MOPSO_Optimiser:
                 # Large Map: Penalize early items heavily using a quadratic curve.
                 penalty_curve = (1.0 - progress) ** 2
                 dist_cost = 1.0 + (3.0 * penalty_curve)
-            
+
             self.item_distance_costs[i] = dist_cost
-            
+
         # The Archive stores the non-dominated solutions found so far
         self.archive = []
 
@@ -723,7 +731,7 @@ class MOPSO_Optimiser:
         valid_weights = self.weights + 1e-9
         ratios = self.values / valid_weights
         mean_ratio = np.mean(ratios)
-        
+
         city_order_map = {city_id: index for index, city_id in enumerate(self.route)}
         total_steps = len(self.route)
         bias_array = np.zeros(len(self.items))
@@ -731,15 +739,15 @@ class MOPSO_Optimiser:
         for idx, item in enumerate(self.items):
             city_id = item['city_id']
             route_pos = city_order_map.get(city_id, 0)
-            progression = route_pos / total_steps 
-            
+            progression = route_pos / total_steps
+
             item_ratio = ratios[idx]
-            
+
             # Dynamic Threshold Calculation:
             # We enforce stricter requirements at the start of the tour (progression 0).
             threshold_multiplier = tightness_factor * (1.0 - progression)
 
-            
+
             required_ratio = mean_ratio * threshold_multiplier
 
             # Determine initial probability of picking this item
@@ -747,7 +755,7 @@ class MOPSO_Optimiser:
                 bias_array[idx] = 0.85 # High chance to pick
             else:
                 bias_array[idx] = 0.15 # Low chance to pick
-                
+
         return bias_array
 
     def initialize_swarm_strategies(self, swarm_size):
@@ -761,18 +769,18 @@ class MOPSO_Optimiser:
             # Particle 0 gets 5% capacity (Sprinter), Particle N gets 100% (Lifter)
             progress = i / swarm_size
             capacity_fraction = 0.05 + (0.95 * progress)
-            
+
             p = MOPSO_Particle(self, capacity_fraction)
-            
+
             # 2. Align Bias with Capacity
             # If you are a Sprinter (low capacity), you must be very PICKY (high factor).
             # If you are a Lifter, you can be GREEDY (low factor).
             factor = (1.0 - progress) * 3.0
-            
+
             bias = self.get_bias_for_factor(factor)
             p.reset_position_with_bias(bias)
-            
-            self.update_archive(p)
+
+            # self.update_archive(p)
             swarm.append(p)
         return swarm
 
@@ -784,16 +792,16 @@ class MOPSO_Optimiser:
         current_sack_weight = 0
         total_time = 0
         vel_span = self.ttp.max_speed - self.ttp.min_speed
-        
+
         for i in range(len(self.route) - 1):
             dist = self.route_distances[i]
-            
+
             # Standard TTP Formula: Velocity decreases linearly with weight
             velocity = self.ttp.max_speed - (current_sack_weight / self.capacity) * vel_span
             if velocity < self.ttp.min_speed: velocity = self.ttp.min_speed
-            
+
             total_time += dist / velocity
-            
+
             # Add weight of items picked up at the NEXT city
             next_city = self.route[i+1]
             items_at_city = self.items_map[next_city]
@@ -809,10 +817,10 @@ class MOPSO_Optimiser:
         """
         to_remove = []
         is_dominated = False
-        
+
         p_time = particle.current_time
         p_profit = particle.current_profit
-        
+
         for sol in self.archive:
             s_time, s_profit, _ = sol
             # If existing solution dominates new particle -> Ignore new particle
@@ -822,12 +830,12 @@ class MOPSO_Optimiser:
             # If new particle dominates existing solution -> Mark existing for removal
             if (p_time <= s_time) and (p_profit >= s_profit):
                 to_remove.append(sol)
-        
+
         if not is_dominated:
             for r in to_remove:
                 self.archive.remove(r)
             self.archive.append((p_time, p_profit, particle.position.copy()))
-        
+
         # Keep archive size manageable
         self.prune_archive(max_size=200)
 
@@ -840,29 +848,29 @@ class MOPSO_Optimiser:
 
         # 1. Sort by Time to arrange linearly
         self.archive.sort(key=lambda x: x[0])
-        
+
         # 2. Calculate Crowding Distance
         n = len(self.archive)
         distances = np.zeros(n)
         distances[0] = distances[-1] = float('inf') # Always keep the extremes (Fastest & Richest)
-        
+
         times = [x[0] for x in self.archive]
         profits = [x[1] for x in self.archive]
         time_range = max(times) - min(times)
         profit_range = max(profits) - min(profits)
-        
+
         if time_range == 0 or profit_range == 0: return
 
         for i in range(1, n-1):
             # Distance is sum of difference to left neighbor and right neighbor
             d_time = (times[i+1] - times[i-1]) / time_range
-            d_profit = (profits[i+1] - profits[i-1]) / profit_range 
+            d_profit = (profits[i+1] - profits[i-1]) / profit_range
             distances[i] = d_time + abs(d_profit)
 
         # 3. Sort by Distance Descending (Keep the most isolated/unique ones)
         enriched = list(zip(self.archive, distances))
         enriched.sort(key=lambda x: x[1], reverse=True)
-        
+
         # 4. Slice to max_size
         self.archive = [x[0] for x in enriched[:max_size]]
 
@@ -891,8 +899,8 @@ class MOPSO_Optimiser:
 
         # Calculate distance matrix between all solutions in archive
         dists = cdist(points, points)
-        np.fill_diagonal(dists, float('inf')) 
-        
+        np.fill_diagonal(dists, float('inf'))
+
         # Score = distance to nearest neighbor (High score = Isolated = Good Leader)
         sparsity_scores = np.min(dists, axis=1)
 
@@ -905,32 +913,36 @@ class MOPSO_Optimiser:
         leader_idx = np.random.choice(len(self.archive), p=probs)
         return self.archive[leader_idx]
 
-    def run(self, swarm_size=100, iterations=100, w=0.5, c1=1.5, c2=1.5, value=0):
-        #w is the inerta weight 
-        #c1 is the cognative (inidividual) coefficent 
-        #c2 is the social coefficent 
+    def run(self, swarm_size=100, iterations=100, w=0.9, c1=1.5, c2=1.5):
+        #w is the inerta weight
+        #c1 is the cognative (inidividual) coefficent
+        #c2 is the social coefficent
         print("Initializing Swarm with Multi-Strategy Heuristics...")
         swarm = self.initialize_swarm_strategies(swarm_size)
 
-        c2 = value
-        
+        # Evaluate all particles before updating archive
+        for p in swarm:
+            p.evaluate()
+            p.update_pbest()
+            self.update_archive(p)
+
         for it in range(iterations):
             for p in swarm:
                 leader = self.select_leader()
                 if leader is None: continue
                 leader_pos = leader[2]
-                
+
                 # --- BINARY PSO UPDATE ---
-                
+
                 # 1. Update Velocity (Standard PSO formula)
                 r1 = np.random.rand(p.dim)
                 r2 = np.random.rand(p.dim)
-                
+
                 p.velocity = (w * p.velocity) + \
                             (c1 * r1 * (p.pbest_position - p.position)) + \
                             (c2 * r2 * (leader_pos - p.position))
-                
-                # Clamp velocity so not too extrenuous. 
+
+                # Clamp velocity so not too extrenuous.
                 p.velocity = np.clip(p.velocity, -6.0, 6.0)
 
                 # 2. Sigmoid Transfer (Velocity -> Probability)
@@ -940,16 +952,16 @@ class MOPSO_Optimiser:
                 # 3. Stochastic Decision
                 rand_vals = np.random.rand(p.dim)
                 p.position = (rand_vals < prob_is_one).astype(float)
-                
+
                 # Evaluation and Archiving
-                p.evaluate() 
+                p.evaluate()
                 p.update_pbest()
                 self.update_archive(p)
-                p.mutate() 
-                
+                p.mutate()
+
             if it % 10 == 0:
                 print(f"Iter {it}: Archive Size {len(self.archive)}")
-                
+
         return self.archive
 
 # FILENAMES = ['Coursework2/src/resources/fnl4461-n22300.txt']
@@ -967,24 +979,86 @@ ref_points = {
 }
         
 if __name__ == "__main__":
+    # param_tests = [
+    #     {"name": "w0.9_c1_1.5_c2_1.5", "w": 0.9, "c1": 1.5, "c2": 1.5},
+    #     {"name": "w0.7_c1_1.5_c2_1.5", "w": 0.7, "c1": 1.5, "c2": 1.5},
+    #     {"name": "w0.5_c1_1.0_c2_2.0", "w": 0.5, "c1": 1.0, "c2": 2.0},
+    #     {"name": "w0.3_c1_2.0_c2_1.0", "w": 0.3, "c1": 2.0, "c2": 1.0},
+    # ]
+
+    param_tests = [
+        {"name": "w0.9_c1_0.0_c2_1.5", "w": 0.9, "c1": 0.0, "c2": 1.5},
+        {"name": "w0.9_c1_0.5_c2_1.5", "w": 0.9, "c1": 0.5, "c2": 1.5},
+        {"name": "w0.9_c1_1.0_c2_1.5", "w": 0.9, "c1": 1.0, "c2": 1.5},
+        {"name": "w0.9_c1_1.5_c2_1.5", "w": 0.9, "c1": 1.5, "c2": 1.5},
+        {"name": "w0.9_c1_2.0_c2_1.5", "w": 0.9, "c1": 2.0, "c2": 1.5},
+        {"name": "w0.9_c1_2.5_c2_1.5", "w": 0.9, "c1": 2.5, "c2": 1.5},
+    ]
+
     all_results = {}
+    FILENAME = "../resources/fnl4461-n22300.txt"
 
-    sizes = [0.5, 0.7, 1.0, 1.5, 2]
+    base_name = os.path.basename(FILENAME)
 
-    for value in sizes:
-        FILENAME = "../resources/fnl4461-n22300.txt"
+    cities, items, capacity, min_speed, max_speed, rr = load_ttp_file(FILENAME)
+    ttp = TTP_Large(cities, items, capacity, min_speed, max_speed, rr)
+    # route = np.loadtxt(f"../../../full_routefnl4461-n22300.txt", dtype=int, delimiter=",")
+    route = np.loadtxt(f"../../../full_route{base_name}.txt", dtype=int, delimiter=",")
+
+    for params in param_tests:
+
+        print(f"\nRunning test: {params['name']}")
+
+        mopso = MOPSO_Optimiser(ttp, route)
+        archive = mopso.run(
+            swarm_size=100,
+            iterations=100,
+            w=params["w"],
+            c1=params["c2"],
+            c2=params["c1"]
+        )
+
+        archive.sort(key=lambda x: x[0])
+
+        times = [x[0] for x in archive]
+        profits = [x[1] for x in archive]
+
+        all_results[params["name"]] = {
+            "times": times,
+            "profits": profits,
+        }
+
+    print(all_results)
+
+    plt.figure(figsize=(10, 6))
+
+    for name, data in all_results.items():
+        times = data["times"]
+        neg_profit = [-p for p in data["profits"]]
+        plt.scatter(times, neg_profit, s=10, alpha=0.6, label=name)
+
+    plt.xlabel("Time")
+    plt.ylabel("Negative Profit")
+    plt.title("PSO Parameter Comparison on TTP Instance")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    """
+
         if os.path.exists(FILENAME):
             print(f"Loading Data: {FILENAME}...")
             base_name = os.path.basename(FILENAME)
             # Remove extension for clean output naming
             name_only = os.path.splitext(base_name)[0]
-            
+
             cities, items, capacity, min_speed, max_speed, rr = load_ttp_file(FILENAME)
 
             # 2. Run Optimisation
             # Initialize TTP
             ttp = TTP_Large(cities, items, capacity, min_speed, max_speed, rr)
-            
+
             # Load route
             try:
                 best_route = np.loadtxt(f"../../../full_route{base_name}.txt", dtype=int, delimiter=",")
@@ -995,16 +1069,16 @@ if __name__ == "__main__":
 
             print("-" * 30)
             print(f"Optimising Packing (MOPSO) for {base_name}...")
-            
+
             mopso = MOPSO_Optimiser(ttp, best_route)
             # Run MOPSO
             archive = mopso.run(swarm_size=100, iterations=100, value=value)
-            
+
             # 3. Extract Results
             # archive contains tuples: (time, profit, position)
             # We sort by Time for cleaner plotting/file writing
             archive.sort(key=lambda x: x[0])
-            
+
             times = [sol[0] for sol in archive]
             profits = [sol[1] for sol in archive]
 
@@ -1019,19 +1093,19 @@ if __name__ == "__main__":
             # Store for final plotting
             all_results[base_name+str(value)] = {'times': times, 'profits': profits}
 
-    # plot profit agaisnt time 
+    # plot profit agaisnt time
     if all_results:
 
         print(all_results)
         print("Generating Final Comparison Plot...")
-        
+
         num_plots = len(all_results)
         cols = 3
         rows = math.ceil(num_plots / cols)
-        
+
         fig, axes = plt.subplots(rows, cols, figsize=(18, 12))
         fig.suptitle('Optimisation Results: Negative Profit vs Time', fontsize=16)
-        
+
         # Handle case of single plot (axes is not an array)
         if num_plots == 1:
             axes_flat = [axes]
@@ -1040,21 +1114,21 @@ if __name__ == "__main__":
 
         for i, (filename, data) in enumerate(all_results.items()):
             ax = axes_flat[i]
-            
+
             times = data['times']
             profits = data['profits']
-            
+
             # Calculate Negative Profit for plotting
             neg_profits = [-p for p in profits]
-            
+
             # Plot
             ax.scatter(times, neg_profits, c='blue', s=15, alpha=0.7, label='Solutions')
-            
+
             ax.set_title(f"{filename}", fontsize=10, fontweight='bold')
             ax.set_xlabel('Time (Min)', fontsize=8)
             ax.set_ylabel('Negative Profit', fontsize=8)
             ax.grid(True, alpha=0.5)
-            
+
             # Scientific notation if numbers get huge
             ax.ticklabel_format(style='sci', axis='both', scilimits=(0,0))
 
@@ -1066,3 +1140,5 @@ if __name__ == "__main__":
         plt.show()
     else:
         print("No results to plot.")
+        
+    """
