@@ -540,10 +540,6 @@ class GACO_Large:
         print(f"Final Optimisation: {best_global_distance} -> {final_dist}")
         return [(final_route, final_dist)]
     
-
-import numpy as np
-import random
-import math
 from scipy.spatial.distance import cdist # Required for select_leader
 
 class MOPSO_Particle:
@@ -574,44 +570,57 @@ class MOPSO_Particle:
         self.current_profit = 0
 
     def evaluate(self):
-        """
-        Converts continuous position to binary plan, enforces constraints, 
-        and calculates Time/Profit.
-        """
-        # Thresholding: > 0.5 means "Attempt to pick item"
+       #Convert Position to Packing Plan
         packing_plan = (self.position > 0.5).astype(int)
+        
+        # allow the limit to change, or particles can't explore trade-offs.
+        wobble = np.random.uniform(0.95, 1.05) 
+        effective_limit = self.capacity_limit * wobble
+        if effective_limit > self.optimiser.capacity: effective_limit = self.optimiser.capacity
+
         current_weight = np.sum(packing_plan * self.optimiser.weights)
         
-        # 2. HEURISTIC REPAIR MECHANISM
-        # If the particle picked too much (over its virtual or physical limit),
-        # we must drop items. We don't drop randomly; we drop the "worst" items.
-        if current_weight > self.capacity_limit:
-            # Find indices of items currently picked
+        
+        # Drop items we "Want" the least (Low Velocity)
+        if current_weight > effective_limit:
             selected_indices = np.where(packing_plan == 1)[0]
             
-            # Calculate Efficiency Score:
-            # Base Ratio = Value / Weight
-            # Distance Factor = Cost of carrying it (High at start of tour, Low at end)
-            # Efficiency = Base Ratio / Distance Factor
-            base_ratios = self.optimiser.values[selected_indices] / (self.optimiser.weights[selected_indices] + 1e-9)
-            dist_factors = self.optimiser.item_distance_costs[selected_indices]
-            efficiencies = base_ratios / (dist_factors + 1e-9)
+            # Use Velocity + Random Noise. 
+            #noise stops solutions getting in loops - promotes evolution
+            scores = self.velocity[selected_indices] + np.random.uniform(-0.5, 0.5, size=len(selected_indices))
             
-            # Sort items by efficiency (ascending). We want to drop low efficiency first.
-            sorted_args = np.argsort(efficiencies)
-            sorted_indices = selected_indices[sorted_args]
+            # Sort: Lowest Score First - drop the worst
+            sorted_indices = selected_indices[np.argsort(scores)]
             
-            # Drop items until we fit inside the limit
             for idx in sorted_indices:
-                if current_weight <= self.capacity_limit: 
-                    break
-                packing_plan[idx] = 0        # Remove from plan
-                self.position[idx] = 0.0     # Update continuous position to reflect drop
+                if current_weight <= effective_limit: break
+                packing_plan[idx] = 0        
                 current_weight -= self.optimiser.weights[idx]
-        
-        # 3. Calculate Objectives
+
+        # Add the best items
+        elif current_weight < effective_limit:
+            unpicked_indices = np.where(packing_plan == 0)[0]
+            
+            # Use Velocity + Random Noise.
+            # High velocity means the swarm thinks this item is good.
+            scores = self.velocity[unpicked_indices] + np.random.uniform(-0.5, 0.5, size=len(unpicked_indices))
+            
+            #Highest Score First
+            sorted_args = np.argsort(scores)[::-1]
+            sorted_unpicked = unpicked_indices[sorted_args]
+            
+            for idx in sorted_unpicked:
+                item_weight = self.optimiser.weights[idx]
+                if current_weight + item_weight <= effective_limit:
+                    packing_plan[idx] = 1
+                    current_weight += item_weight
+                    # Update position to reinforce the "Learning"
+                    self.position[idx] = 1.0 
+                
+                if effective_limit - current_weight < 1.0: break
+
+        # Objectives
         self.current_profit = np.sum(packing_plan * self.optimiser.values)
-        # Use the Optimiser's physics engine to calculate time
         self.current_time = self.optimiser.calculate_time(packing_plan, current_weight)
 
     def update_pbest(self):
@@ -639,23 +648,27 @@ class MOPSO_Particle:
             self.pbest_time = self.current_time
             self.pbest_profit = self.current_profit
 
-    def mutate(self, mutation_rate=0.01):
+    def mutate(self, mutation_rate=None):
         """
-        Randomly flips bits to maintain genetic diversity in the swarm.
+        Randomly flips bits. 
+        1/N mutation (flip 1 bit on average).
         """
+        # If no rate provided, use 1/D
+        if mutation_rate is None:
+            mutation_rate = 1.0 / self.dim
+            
+        # Safety clamp: Ensure we don't flip too little on tiny maps
+
         mask = np.random.rand(self.dim) < mutation_rate
         self.position[mask] = 1.0 - self.position[mask]
 
     def reset_position_with_bias(self, bias_array):
-        """
-        Used during initialization to seed the particle with a 'smart' starting point
-        based on heuristics, rather than pure random noise.
-        """
         self.dim = len(bias_array)
-        # Add slight noise to the bias so not every particle is identical
+        
+        # Position initialization (Standard)
         noise = (np.random.rand(self.dim) * 0.2) - 0.1 
         self.position = np.clip(bias_array + noise, 0, 1)
-        self.velocity = np.zeros(self.dim)
+        self.velocity = (self.position - 0.5) * 2.0  # Maps [0,1] to [-1,1]
         
         self.evaluate()
         self.pbest_position = self.position.copy()
