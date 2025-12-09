@@ -1,6 +1,7 @@
 # TODO: TEST HYPERPARAMETERS FOR EVOLUTIONARY ALGORITHM
 
 import os
+import pickle
 import random
 import itertools
 import math
@@ -9,7 +10,7 @@ import time
 import numpy as np
 import matplotlib.pyplot as plt
 
-fname = "src/resources/a280-n1395.txt"
+# fname = "src/resources/a280-n279.txt"
 fitness_cache = {}
 
 def open_file(fname):
@@ -67,13 +68,19 @@ def open_file(fname):
             bags.append((i, prof, weight, node))
             
     n = len(cities)
-    dist = [[0] * n for _ in range(n)]
-    for i in range(n):
-        xi, yi = cities[i][1], cities[i][2]
-        for j in range(n):
-            xj, yj = cities[j][1], cities[j][2]
-            d = math.hypot(xi - xj, yi - yj)
-            dist[i][j] = math.ceil(d)
+    
+    outname = "src/resources/fnl4461-n4460_dist.pkl"
+    if os.path.exists(outname):
+        with open(outname, "rb") as f:
+            dist = pickle.load(f)
+    else:
+        dist = [[0] * n for _ in range(n)]
+        for i in range(n):
+            xi, yi = cities[i][1], cities[i][2]
+            for j in range(n):
+                xj, yj = cities[j][1], cities[j][2]
+                d = math.hypot(xi - xj, yi - yj)
+                dist[i][j] = math.ceil(d)
             
     city_items = {c: [] for c in range(n)}
     for idx, prof, weight, city in bags:
@@ -105,53 +112,48 @@ def fitness(chromosome, dist, bags, capacity, vmax, vmin, rent, city_items, velo
     # Add initial city to start and end
     chromosome = [0] + chromosome + [0]
     
-    # distance = [dist[chromosome[i]][chromosome[i+1]] for i in range(len(chromosome) - 1)]
+    distance = [dist[chromosome[i]][chromosome[i+1]] for i in range(len(chromosome) - 1)]
     
-    # bag_index = {city: city_items[city] for city in chromosome}
+    bag_index = {city: city_items[city] for city in chromosome}
 
-    # item, prof, weight, city = pbag_split(bags)
+    item, prof, weight, city = pbag_split(bags)
 
-    # sol, val, wt, time = aco_knapsack(prof,
-    #     weight,
-    #     capacity,
-    #     distance,
-    #     chromosome,
-    #     bag_index,
-    #     vmax, vmin,
-    #     rent,
-    #     n_ants=10,
-    #     n_iterations=30)
+    sol, val, wt, time = aco_knapsack(prof,
+        weight,
+        capacity,
+        distance,
+        chromosome,
+        bag_index,
+        vmax, vmin,
+        rent,
+        n_ants=10,
+        n_iterations=15)
     
-    # return time
+    return time
     
     
     
-    # For testing purposes, assume constant velocity if none provided
-    if velocity is None:
-        # constant velocity of 1
-        return sum(dist[chromosome[i]][chromosome[i+1]] for i in range(len(chromosome) - 1))
-    else:
-        total_time = 0
-        for i in range(len(chromosome) - 1):
-            total_time += dist[chromosome[i]][chromosome[i+1]] / velocity[i]
-        return total_time
+    # # For testing purposes, assume constant velocity if none provided
+    # if velocity is None:
+    #     # constant velocity of 1
+    #     return sum(dist[chromosome[i]][chromosome[i+1]] for i in range(len(chromosome) - 1))
+    # else:
+    #     total_time = 0
+    #     for i in range(len(chromosome) - 1):
+    #         total_time += dist[chromosome[i]][chromosome[i+1]] / velocity[i]
+    #     return total_time
 
 def selection(t_size, chromosomes, fitness_values):
-    # """Selects two parents from the population using tournament selection"""
-    # def tournament(t_size, chromosomes, fitness_values):
-    #     """Tournament selection helper function"""
-    #     indices = [random.randint(0, len(chromosomes) - 1) for _ in range(t_size)]
-    #     best_idx = min(indices, key=lambda i: fitness_values[i])
-    #     return chromosomes[best_idx]
+    """Selects two parents from the population using tournament selection"""
+    def tournament(t_size, chromosomes, fitness_values):
+        """Tournament selection helper function"""
+        indices = [random.randint(0, len(chromosomes) - 1) for _ in range(t_size)]
+        best_idx = min(indices, key=lambda i: fitness_values[i])
+        return chromosomes[best_idx]
     
-    # parent1 = tournament(t_size, chromosomes, fitness_values)
-    # parent2 = tournament(t_size, chromosomes, fitness_values)
+    parent1 = tournament(t_size, chromosomes, fitness_values)
+    parent2 = tournament(t_size, chromosomes, fitness_values)
     
-    n = len(chromosomes)
-    ranks = sorted(range(n), key=lambda i: fitness_values[i])
-    selection_probs = [2 * (n - rank) / (n * (n + 1)) for rank in range(n)]
-    parent1 = chromosomes[np.random.choice(ranks, p=selection_probs)]
-    parent2 = chromosomes[np.random.choice(ranks, p=selection_probs)]
     return [parent1, parent2]
 
 def crossover(parents):
@@ -175,6 +177,41 @@ def crossover(parents):
     child2 = create_child(subseq2, parents[0])
     return child1, child2
 
+# def crossover(parents):
+#     """Performs standard Order Crossover (OX) on two parents to produce two children."""
+#     parent1, parent2 = parents
+#     size = len(parent1)
+
+#     # Choose two distinct crossover points
+#     cut1, cut2 = sorted(random.sample(range(size), 2))
+
+#     def ox_child(p_a, p_b):
+#         """Create one child using Order Crossover (OX)."""
+#         child = [None] * size
+
+#         # 1) Copy the slice from p_a into the child
+#         child[cut1:cut2] = p_a[cut1:cut2]
+
+#         # 2) Fill the remaining positions with genes from p_b in order,
+#         #    skipping those already present in the copied slice.
+#         p_b_idx = cut2
+#         child_idx = cut2
+
+#         while None in child:
+#             gene = p_b[p_b_idx % size]
+#             if gene not in child:
+#                 child[child_idx % size] = gene
+#                 child_idx += 1
+#             p_b_idx += 1
+
+#         return child
+
+#     # Produce two children, swapping parent roles
+#     child1 = ox_child(parent1, parent2)
+#     child2 = ox_child(parent2, parent1)
+
+#     return child1, child2
+
 def mutation(chromosome, mutation_rate=0.005):
     """Performs swap mutation on a chromosome"""
     # Go through each gene in the chromosome
@@ -196,30 +233,49 @@ def replacement(chromosomes, children, dist, bags, capacity, vmax, vmin, rent, c
             fitness_values[longest_dist] = child_fitness
     return chromosomes, fitness_values
 
-def evolutionary_algorithm(fname, population_size=10, t_size=5, mutation_rate=0.005):
+def evolutionary_algorithm(fname, population_size=20, t_size=15, mutation_rate=0.001):
     """Main function to run the evolutionary algorithm"""
     cities, dist, bags, capacity, vmax, vmin, rent, city_items = open_file(fname)
     chromosomes = initialise(cities, population_size)
     fitness_values = [fitness(chromosome, dist, bags, capacity, vmax, vmin, rent, city_items) for chromosome in chromosomes]
+    all_results = []
 
     # Run the evolutionary algorithm for a set number of generations
     # Number of generations can be adjusted as needed
-    for i in range(10000):
+    for i in range(1000):
+        print(f"Generation {i+1}")
         parents = selection(t_size, chromosomes, fitness_values)
         child1, child2 = crossover(parents)
         mutated_child1 = mutation(child1, mutation_rate)
         mutated_child2 = mutation(child2, mutation_rate)
         # replacement returns updated (chromosomes, fitness_values) so unpack both
         chromosomes, fitness_values = replacement(chromosomes, [mutated_child1, mutated_child2], dist, bags, capacity, vmax, vmin, rent, city_items, fitness_values)
+        if ((i + 1) % 10) == 0:
+            print(i)
+        # Store generation-best solution
+            best_idx = min(range(len(chromosomes)), key=lambda i: fitness_values[i])
+            gen_best_chrom = chromosomes[best_idx]
 
-    best_idx = min(range(len(chromosomes)), key=lambda i: fitness_values[i])
-    best_chromosome = chromosomes[best_idx]
-    best_value = fitness_values[best_idx]
+            # Build full route
+            route = [0] + gen_best_chrom + [0]
+            distance_list = [dist[route[i]][route[i+1]] for i in range(len(route)-1)]
 
-    print(f"Best chromosome: {best_chromosome}")
-    print(f"Best value: {best_value}")
-    return best_value, best_chromosome, dist
+            # Compute value using aco_knapsack
+            bags, capacity, vmax, vmin, rent = open_file_bags(fname)
+            item, prof, weight, city = pbag_split(bags)
+            bag_index = find_bags(route, bags)
 
+            sol, val, wt, time_taken = aco_knapsack(
+                prof, weight, capacity,
+                distance_list, route, bag_index,
+                vmax, vmin, rent,
+                n_ants=10, n_iterations=25
+            )
+
+            all_results.append((time_taken, val))
+
+    return all_results
+    # return min(fitness_values), chromosomes[fitness_values.index(min(fitness_values))], dist
 ########################################################
 ########################################################
 ########################################################
@@ -398,7 +454,7 @@ def construct_solution3(values, weights, capacity, pheromone, heuristic,
 
             city_tau = pheromone[i] ** alpha
             city_eta = heuristic[i] ** beta
-            city_score =+ city_tau * city_eta
+            city_score += city_tau * city_eta
 
         for i in bag_index[city]:  
             
@@ -583,9 +639,26 @@ def aco_knapsack(
     return best_solution.tolist(), best_value, best_weight, best_time
 
 
+fnames= ["src/resources/fnl4461-n44600.txt"]
 
-value, route, distance = evolutionary_algorithm(fname)
-plt.show()
+out_dir = "evo_f_files"
+os.makedirs(out_dir, exist_ok=True)
+
+for fname in fnames:
+    print(f"\nRunning evolutionary algorithm for {fname}...")
+    
+    results = evolutionary_algorithm(fname)
+
+    # Save all results like TTP.py
+    base = os.path.basename(fname)
+    name_only = os.path.splitext(base)[0]
+    f_path = os.path.join(out_dir, f"{name_only}.f")
+
+    with open(f_path, "w") as f_out:
+        for t, v in results:
+            f_out.write(f"{t:.6f} {int(v)}\n")
+
+    print(f"Written multi-row .f file: {f_path}")   
 
 # cities = open_file2(fname)
 
@@ -614,63 +687,80 @@ plt.show()
 # print("sol length:", len(sol))s
 
     
-fnames= ["src/resources/fnl4461-n4460.txt"]
-population_sizes = [20, 50, 100]
-tournament_sizes = [5, 10, 15]
-mutation_rates = [0.001, 0.005, 0.01]
-optimal_parameters = []
+# fnames= ["src/resources/fnl4461-n4460.txt"]
+# population_sizes = [20, 50, 100]
+# tournament_sizes = [5, 10, 15]
+# mutation_rates = [0.001, 0.005, 0.01]
+# optimal_parameters = []
 
-# Collect all results for later analysis
-all_test_results = []
+# # Collect all results for later analysis
+# all_test_results = []
 
-for fname in fnames:
-    best_params = None
-    test_results = []
-    start_file = time.time()
-    for pop_size, t_size, mut_rate in itertools.product(population_sizes, tournament_sizes, mutation_rates):
-        print(f"Testing with population size: {pop_size}, tournament size: {t_size}, mutation rate: {mut_rate} for file {fname}")
-        best_value, best_chromosome, dist = evolutionary_algorithm(fname, population_size=pop_size, t_size=t_size, mutation_rate=mut_rate)
-        record = {
-            "file": fname,
-            "population_size": pop_size,
-            "tournament_size": t_size,
-            "mutation_rate": mut_rate,
-            "best_value": best_value,
-            "best_chromosome": str(best_chromosome)
-        }
-        test_results.append(record)
-        all_test_results.append(record)
+# for fname in fnames:
+#     best_params = None
+#     test_results = []
+#     start_file = time.time()
+    # for pop_size, t_size, mut_rate in itertools.product(population_sizes, tournament_sizes, mutation_rates):        
+    #     for i in range(10):
+        #     print(f"Testing with population size: {pop_size}, tournament size: {t_size}, mutation rate: {mut_rate} for file {fname}")
+        #     best_value, best_chromosome, dist = evolutionary_algorithm(fname, population_size=pop_size, t_size=t_size, mutation_rate=mut_rate)
+        #     record = {
+        #         "file": fname,
+        #         "population_size": pop_size,
+        #         "tournament_size": t_size,
+        #         "mutation_rate": mut_rate,
+        #         "best_value": best_value,
+        #         "best_chromosome": str(best_chromosome)
+        #     }
+        #     test_results.append(record)
+        #     all_test_results.append(record)
 
-        if best_params is None or best_value < best_params[0]:
-            best_params = (best_value, pop_size, t_size, mut_rate)
-    elapsed = time.time() - start_file
-    optimal_parameters.append((fname, best_params))
-    # Write per-file CSV with all parameter combinations and results
-    out_name = f"results_{os.path.basename(fname)}.csv"
-    try:
-        with open(out_name, "w", newline="", encoding="utf-8") as csvfile:
-            fieldnames = ["file", "population_size", "tournament_size", "mutation_rate", "best_value", "best_chromosome"]
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            for r in test_results:
-                writer.writerow(r)
-        print(f"Finished tests for {fname} in {elapsed:.1f}s — wrote {out_name}")
-    except Exception as e:
-        print(f"Failed to write results for {fname}: {e}")
+        #     if best_params is None or best_value < best_params[0]:
+        #         best_params = (best_value, pop_size, t_size, mut_rate)
+        # elapsed = time.time() - start_file
+        # optimal_parameters.append((fname, best_params))
+        # # Write per-file CSV with all parameter combinations and results
+        # out_name = f"results_{os.path.basename(fname)}.csv"
+        # try:
+        #     with open(out_name, "w", newline="", encoding="utf-8") as csvfile:
+        #         fieldnames = ["file", "population_size", "tournament_size", "mutation_rate", "best_value", "best_chromosome"]
+        #         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        #         writer.writeheader()
+        #         for r in test_results:
+        #             writer.writerow(r)
+        #     print(f"Finished tests for {fname} in {elapsed:.1f}s — wrote {out_name}")
+        # except Exception as e:
+        #     print(f"Failed to write results for {fname}: {e}")
 
-for params in optimal_parameters:
-    print(f"Optimal parameters for {params[0]}: Population Size = {params[1][1]}, Tournament Size = {params[1][2]}, Mutation Rate = {params[1][3]} with Best Value = {params[1][0]}")
+# for params in optimal_parameters:
+#     print(f"Optimal parameters for {params[0]}: Population Size = {params[1][1]}, Tournament Size = {params[1][2]}, Mutation Rate = {params[1][3]} with Best Value = {params[1][0]}")
 
-# Write aggregated CSV for all files
-agg_name = "all_results.csv"
-try:
-    with open(agg_name, "w", newline="", encoding="utf-8") as csvfile:
-        fieldnames = ["file", "population_size", "tournament_size", "mutation_rate", "best_value", "best_chromosome"]
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        writer.writeheader()
-        for r in all_test_results:
-            writer.writerow(r)
-    print(f"Wrote aggregated results to {agg_name}")
-except Exception as e:
-    print(f"Failed to write aggregated results: {e}")
+# # Write aggregated CSV for all files
+# agg_name = "all_results.csv"
+# try:
+#     with open(agg_name, "w", newline="", encoding="utf-8") as csvfile:
+#         fieldnames = ["file", "population_size", "tournament_size", "mutation_rate", "best_value", "best_chromosome"]
+#         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+#         writer.writeheader()
+#         for r in all_test_results:
+#             writer.writerow(r)
+#     print(f"Wrote aggregated results to {agg_name}")
+# except Exception as e:
+#     print(f"Failed to write aggregated results: {e}")
 
+# fnames= ["src/resources/fnl4461-n4460.txt"]
+# best_results = []
+
+# for fname in fnames: 
+#     for i in range(5):
+#         print(f"Running evolutionary algorithm for {fname}...")
+#         best_value, best_chromosome, dist = evolutionary_algorithm(fname, population_size=10, t_size=3, mutation_rate=0.001)
+#         print(f"Best value: {best_value}")
+#         print(f"Best chromosome: {best_chromosome}")
+#         best_results.append((fname, best_value, best_chromosome))
+        
+# with open("oxcrossover.txt", "w") as f:
+#     for fname, best_value, best_chromosome in best_results:
+#         f.write(f"Best Value: {best_value}\n")
+#         f.write(f"Best Chromosome: {best_chromosome}\n\n")
+        
