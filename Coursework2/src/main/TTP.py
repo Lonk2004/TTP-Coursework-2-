@@ -828,11 +828,11 @@ class GISS_Optimiser:
                 solution.fitness = current_best
         return solution
 
-    def run(self, population_size=50, iterations=2000):
+    def run(self, population_size=50, iterations=2000, selection_prob=0.05):
         # Switched from a Generational model to a Steady-State model (replace worst), can try both. 
         population = []
         for _ in range(population_size):
-            sol = GISS_Solution(self, initialise=True)
+            sol = GISS_Solution(self, initialise=True, selection_prob=selection_prob)
             sol.calc_fitness()
             population.append(sol)
 
@@ -858,14 +858,14 @@ class GISS_Optimiser:
 
 
 class GISS_Solution: 
-    def __init__(self, optimiser, initialise=True): 
+    def __init__(self, optimiser, initialise=True, selection_prob = 0.05):
         self.optimiser = optimiser
         self.fitness = -float('inf')
 
-        if initialise: 
+        if initialise:
             # Implemented biased initialization using the pre-calculated item_bias_probs, so that chromosomes are more valid to problem.
             rands = np.random.random(len(optimiser.bags))
-            thresholds = optimiser.item_bias_probs * 0.05 
+            thresholds = optimiser.item_bias_probs * selection_prob
             self.chromosome = (rands < thresholds).astype(int)
         else: 
             self.chromosome = np.zeros(len(optimiser.bags), dtype=int)
@@ -1003,8 +1003,14 @@ class Solution:
         cls.renting_ratio = rr
         cls.mutation_rate = mutation_rate
 
-    def __init__(self):
-        self.chromosome = np.random.randint(0, 2, size=len(Solution.possible_items))
+    def __init__(self, selection_rate=0.5):
+        n_items = len(Solution.possible_items)
+
+        self.chromosome = np.random.choice(
+            [0, 1],
+            size=n_items,
+            p=[1 - selection_rate, selection_rate]
+        )
 
         self.fitness = None
 
@@ -1175,8 +1181,8 @@ def crossover_weighted(parent1, parent2):
     return child1, child2
 
 
-def generate_population(size):
-    return [Solution() for _ in range(size)]
+def generate_population(size, selection_rate=0.5):
+    return [Solution(selection_rate) for _ in range(size)]
 
 
 def repair_population(population):
@@ -1354,7 +1360,7 @@ def run_testing(capacity, bags, seed_list):
     paired_test(capacity, bags, seed_list, [0.2, 0.1, 0.3], "elite_n")
 
 
-def genetic_algorithm(max_weight, items, route, city_positions, rr, max_velocity, min_velocity, population_size=200, population_repair=1.0, mutation_rate=0.05, tournament_size=0.2, elite_n=0.1, generations=100):
+def genetic_algorithm(max_weight, items, route, city_positions, rr, max_velocity, min_velocity, population_size=200, population_repair=1.0, mutation_rate=0.05, tournament_size=0.2, elite_n=0.1, generations=100, selection_rate=0.5, repair=False):
     """
     Genetic algorithm function
     """
@@ -1366,8 +1372,9 @@ def genetic_algorithm(max_weight, items, route, city_positions, rr, max_velocity
 
     tournament_n = math.floor(population_size * tournament_size)
 
-    population = generate_population(population_size)
-    repair_population(population[:int(population_size * population_repair)])
+    population = generate_population(population_size, selection_rate)
+    if repair:
+        repair_population(population[:int(population_size * population_repair)])
 
     # Generation loop
     with tqdm(total=generations) as bar:
@@ -1404,7 +1411,8 @@ def genetic_algorithm(max_weight, items, route, city_positions, rr, max_velocity
 
             # population replacement and repair
             population = new_population
-            repair_population(population[:int(population_size * population_repair)])
+            if repair:
+                repair_population(population[:int(population_size * population_repair)])
             bar.update(1)
 
     calculate_population_fitness(population)
@@ -1416,24 +1424,10 @@ def genetic_algorithm(max_weight, items, route, city_positions, rr, max_velocity
 
     return population, history
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
     
 FILENAMES = ['Coursework2/src/resources/a280-n279.txt', 'Coursework2/src/resources/a280-n1395.txt', 'Coursework2/src/resources/a280-n2790.txt', 'Coursework2/src/resources/fnl4461-n4460.txt','Coursework2/src/resources/fnl4461-n22300.txt','Coursework2/src/resources/fnl4461-n44600.txt','Coursework2/src/resources/pla33810-n33809.txt','Coursework2/src/resources/pla33810-n169045.txt','Coursework2/src/resources/pla33810-n338090.txt']
-ALT_FILENAMES = ['../resources/a280-n279.txt', '../resources/a280-n1395.txt', '../resources/a280-n2790.txt', '../resources/fnl4461-n4460.txt','../resources/fnl4461-n22300.txt','../resources/fnl4461-n44600.txt','../resources/pla33810-n33809.txt','../resources/pla33810-n169045.txt','../resources/pla33810-n338090.txt']
+# ALT_FILENAMES = ['../resources/a280-n279.txt', '../resources/a280-n1395.txt', '../resources/a280-n2790.txt', '../resources/fnl4461-n4460.txt','../resources/fnl4461-n22300.txt','../resources/fnl4461-n44600.txt','../resources/pla33810-n33809.txt','../resources/pla33810-n169045.txt','../resources/pla33810-n338090.txt']
+ALT_FILENAMES = ['../resources/a280-n2790.txt']
 
 if __name__ == "__main__":
     for FILENAME in ALT_FILENAMES:
@@ -1460,18 +1454,88 @@ if __name__ == "__main__":
             print(f"ACO COMPLETE. Optimizing Packing...")
             print("-" * 30)
 
-            best_solution = \
-            genetic_algorithm(ttp.capacity, ttp.items, best_route, ttp.cities, ttp.renting_ratio, ttp.max_speed,
-                              ttp.min_speed, population_size=200, population_repair=0.0, mutation_rate=0.05,
-                              tournament_size=0.2, elite_n=0.1, generations=200)[0][0]
-            print("GA best solution: ")
-            print(best_solution)
-            print("-" * 30)
+            selection_rates = [0.01, 0.05, 0.1]
+            results = {rate: {"Repair": [], "Classic": []} for rate in selection_rates}
+
+            # Run the simulations
+            for rate in selection_rates:
+                for i in range(20):
+                    best_solution = genetic_algorithm(
+                        ttp.capacity, ttp.items, best_route, ttp.cities, ttp.renting_ratio,
+                        ttp.max_speed, ttp.min_speed,
+                        population_size=100, population_repair=0.0, mutation_rate=0.05,
+                        tournament_size=0.2, elite_n=0.1, generations=100,
+                        selection_rate=rate, repair=False
+                    )[0][0]
+                    results[rate]["Classic"].append(best_solution.fitness)
+                    print("no repair: ",best_solution.fitness)
+                print()
+
+                for i in range(20):
+                    best_solution = genetic_algorithm(
+                        ttp.capacity, ttp.items, best_route, ttp.cities, ttp.renting_ratio,
+                        ttp.max_speed, ttp.min_speed,
+                        population_size=100, population_repair=1.0, mutation_rate=0.05,
+                        tournament_size=0.2, elite_n=0.1, generations=100,
+                        selection_rate=rate, repair=True
+                    )[0][0]
+                    results[rate]["Repair"].append(best_solution.fitness)
+                    print("repair: ",best_solution.fitness)
+                print("\n\n")
+
+            data = []
+            labels = []
+            for rate in selection_rates:
+                data.append(results[rate]["Classic"])
+                data.append(results[rate]["Repair"])
+                labels.extend([f"{rate}\nClassic", f"{rate}\nRepair"])
+
+            plt.figure(figsize=(10, 5))
+            plt.boxplot(data, labels=labels)
+            plt.xlabel("Selection Rate and Method")
+            plt.ylabel("Fitness")
+            plt.title("Fitness Distribution by Selection Rate and Repair Method")
+            plt.grid(True, linestyle="--", alpha=0.4)
+            plt.show()
+
+
+
+
+            # results = {"Push-Pull": [], "Classic": []}
+            #
+            # for i in range(10):
+            #     best_solution = \
+            #     genetic_algorithm(ttp.capacity, ttp.items, best_route, ttp.cities, ttp.renting_ratio, ttp.max_speed,
+            #                       ttp.min_speed, population_size=100, population_repair=0.0, mutation_rate=0.05,
+            #                       tournament_size=0.2, elite_n=0.1, generations=100, selection_rate=0.01, repair=False)[0][0]
+            #     results["Classic"].append(best_solution.fitness)
+            #
+            # for i in range(10):
+            #     best_solution = \
+            #     genetic_algorithm(ttp.capacity, ttp.items, best_route, ttp.cities, ttp.renting_ratio, ttp.max_speed,
+            #                       ttp.min_speed, population_size=100, population_repair=0.0, mutation_rate=0.05,
+            #                       tournament_size=0.2, elite_n=0.1, generations=100, selection_rate=0.01, repair=True)[0][0]
+            #     results["Push-Pull"].append(best_solution.fitness)
+            #
+            # data = [results["Push-Pull"], results["Classic"]]
+            #
+            # plt.figure(figsize=(8, 5))
+            # plt.boxplot(data, labels=["Repair", "Classic"])
+            # plt.xlabel("Selection Rate")
+            # plt.ylabel("Fitness")
+            # plt.title("Fitness Distribution per Selection Rate")
+            # plt.grid(True, linestyle="--", alpha=0.4)
+            #
+            # plt.show()
+
+
+
 
             # 3. Run GISS (Genetic Algorithm)
             # Create the optimizer controller
             giss_opt = GISS_Optimiser(ttp, best_route)
-            best_giss_solution = giss_opt.run(population_size=20, iterations=3000)
+            best_giss_solution = giss_opt.run(population_size=20, iterations=3000, selection_prob=0.05)
+            other_sol = giss_opt.run(population_size=20, iterations=3000, selection_prob=0.5)
 
 
 
@@ -1485,6 +1549,7 @@ if __name__ == "__main__":
             print("="*30)
             print(f"Empty Bag Score:   {baseline.fitness:.2f}")
             print(f"GISS Best Score:   {best_giss_solution.fitness:.2f}")
+            print(f"GISS Best Score(other):   {other_sol.fitness:.2f}")
             print(f"Profit Gained:     {best_giss_solution.get_value():.2f}")
             print(f"Weight Filled:     {best_giss_solution.get_weight():.2f} / {ttp.capacity}")
             print("="*30)
